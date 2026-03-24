@@ -1,8 +1,8 @@
 import { useState, useEffect, useRef } from "react";
-
+ 
 const ADMIN_CODE = "ADMIN9";
 const SUPER_CODE = "SUPER9";
-
+ 
 const EXCUSE_REASONS = [
   "Problemas de conexión",
   "Incapacidad médica",
@@ -11,7 +11,7 @@ const EXCUSE_REASONS = [
   "Conflicto de horario con cliente",
   "Otra razón",
 ];
-
+ 
 const SAMPLE_QUIZZES = [
   {
     id: "q1", title: "Fundamentos de Markdown",
@@ -40,11 +40,11 @@ const SAMPLE_QUIZZES = [
     sessions: [{ id: "s3", date: "2025-01-20", participants: 89, avgScore: 65, farmerResults: [], excusados: [] }],
   },
 ];
-
+ 
 function genCode() { return Math.floor(100000 + Math.random() * 900000).toString(); }
 function shuffle(arr) { const a = [...arr]; for (let i = a.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [a[i], a[j]] = [a[j], a[i]]; } return a; }
 function pct(correct, total) { return total === 0 ? 0 : Math.round((correct / total) * 100); }
-
+ 
 function buildCSV(session, quizTitle) {
   const headers = ["#", "Correo Farmer", "% Asertividad", "Debió Responder", "Respondió", "Correctas", "Incorrectas", "No Respondió", "Estado"];
   const excEmails = (session.excusados || []).map(e => e.farmerEmail);
@@ -54,19 +54,19 @@ function buildCSV(session, quizTitle) {
   (session.excusados || []).filter(e => !(session.farmerResults || []).some(r => r.email === e.farmerEmail)).forEach(e => { rows.push([idx++, e.farmerEmail, "—", "—", "—", "—", "—", "—", "Excusado"]); });
   return [headers, ...rows].map(r => r.map(v => `"${v}"`).join(",")).join("\n");
 }
-
+ 
 function openCSV(csv, title) {
   const link = document.createElement("a");
   link.href = "data:text/csv;charset=utf-8," + encodeURIComponent(csv);
   link.download = `${title.replace(/ /g, "_")}_resultados.csv`;
   link.click();
 }
-
+ 
 // ── SKIN / HAIR / SHIRT OPTIONS ──────────────────────────────────────────────
 const SKIN_TONES = ["#FDDBB4", "#F0C28A", "#D4956A", "#A0614A", "#6B3F2E"];
 const HAIR_COLORS = ["#1a0a00", "#4a2000", "#8B4513", "#D4A017", "#FF6B6B", "#4A90D9", "#E8E8E8"];
 const SHIRT_COLORS = ["#FF441F", "#FF6B6B", "#4A90D9", "#50C878", "#9B59B6", "#F39C12", "#1a1a2e"];
-
+ 
 // ── AVATAR SVG ────────────────────────────────────────────────────────────────
 function Avatar({ config, size = 80 }) {
   const { skin, hair, shirt, gender, accessory } = config;
@@ -74,29 +74,29 @@ function Avatar({ config, size = 80 }) {
   return (
     <svg width={size} height={size} viewBox="0 0 100 100" style={{ borderRadius: "50%", display: "block" }}>
       <circle cx="50" cy="50" r="50" fill="#1a1a2e" />
-
+ 
       {isFemale ? (
         <>
           {/* === FEMALE AVATAR === */}
           {/* Long hair BACK layer (behind body) */}
           <path d="M29 38 Q24 60 26 82 Q32 90 38 88 Q34 72 33 52Z" fill={hair} />
           <path d="M71 38 Q76 60 74 82 Q68 90 62 88 Q66 72 67 52Z" fill={hair} />
-
+ 
           {/* Body / shirt - feminine cut */}
           <path d="M22 100 Q20 74 34 69 Q42 74 50 75 Q58 74 66 69 Q80 74 78 100Z" fill={shirt} />
           {/* Neckline V shape */}
           <path d="M41 69 Q50 78 59 69 L57 73 Q50 80 43 73Z" fill="rgba(255,255,255,0.12)" />
-
+ 
           {/* Neck */}
           <rect x="43" y="56" width="14" height="15" rx="4" fill={skin} />
-
+ 
           {/* Head - slightly rounder/softer */}
           <ellipse cx="50" cy="43" rx="19" ry="21" fill={skin} />
-
+ 
           {/* Ears (hidden behind hair mostly) */}
           <ellipse cx="31" cy="44" rx="3.5" ry="4.5" fill={skin} />
           <ellipse cx="69" cy="44" rx="3.5" ry="4.5" fill={skin} />
-
+ 
           {/* Hair top - smooth voluminous top */}
           <ellipse cx="50" cy="26" rx="21" ry="13" fill={hair} />
           {/* Hair sides flowing down - smooth curves */}
@@ -106,11 +106,11 @@ function Avatar({ config, size = 80 }) {
           <path d="M30 26 Q50 18 70 26 Q65 22 50 20 Q35 22 30 26Z" fill={hair} />
           {/* Center part highlight */}
           <path d="M44 20 Q50 17 56 20 Q50 19 44 20Z" fill="rgba(255,255,255,0.08)" />
-
+ 
           {/* Eyelashes (top) */}
           <path d="M36 40 Q40 38 44 40" stroke={hair} strokeWidth="1.2" fill="none" strokeLinecap="round" opacity="0.9" />
           <path d="M56 40 Q60 38 64 40" stroke={hair} strokeWidth="1.2" fill="none" strokeLinecap="round" opacity="0.9" />
-
+ 
           {/* Eyes - larger, almond shape for female */}
           <ellipse cx="40" cy="43.5" rx="4.5" ry="3.5" fill="white" />
           <ellipse cx="60" cy="43.5" rx="4.5" ry="3.5" fill="white" />
@@ -121,16 +121,16 @@ function Avatar({ config, size = 80 }) {
           {/* Lower lash line */}
           <path d="M36.5 45.5 Q40 47 43.5 45.5" stroke="rgba(0,0,0,0.25)" strokeWidth="0.8" fill="none" />
           <path d="M56.5 45.5 Q60 47 63.5 45.5" stroke="rgba(0,0,0,0.25)" strokeWidth="0.8" fill="none" />
-
+ 
           {/* Eyebrows - arched and thin */}
           <path d="M36 37.5 Q40 35.5 44 37" stroke={hair} strokeWidth="1.4" fill="none" strokeLinecap="round" />
           <path d="M56 37 Q60 35.5 64 37.5" stroke={hair} strokeWidth="1.4" fill="none" strokeLinecap="round" />
-
+ 
           {/* Nose - delicate */}
           <path d="M48.5 48 Q50 51.5 51.5 48" stroke={skin === "#FDDBB4" ? "#c8906a" : "#7a4a30"} strokeWidth="1" fill="none" strokeLinecap="round" />
           <circle cx="47.5" cy="50.5" r="1" fill={skin === "#FDDBB4" ? "#d4956a" : "#7a4a30"} opacity="0.5" />
           <circle cx="52.5" cy="50.5" r="1" fill={skin === "#FDDBB4" ? "#d4956a" : "#7a4a30"} opacity="0.5" />
-
+ 
           {/* Mouth - smile with lips */}
           {/* Upper lip */}
           <path d="M43.5 55 Q46 53.5 50 54 Q54 53.5 56.5 55" stroke="#c06080" strokeWidth="0.8" fill="none" strokeLinecap="round" />
@@ -143,11 +143,11 @@ function Avatar({ config, size = 80 }) {
           {/* Smile dimples */}
           <circle cx="42" cy="56.5" r="1" fill="rgba(200,80,100,0.2)" />
           <circle cx="58" cy="56.5" r="1" fill="rgba(200,80,100,0.2)" />
-
+ 
           {/* Cheek blush */}
           <ellipse cx="34" cy="49" rx="5" ry="3" fill="rgba(220,100,120,0.15)" />
           <ellipse cx="66" cy="49" rx="5" ry="3" fill="rgba(220,100,120,0.15)" />
-
+ 
           {/* Accessories */}
           {accessory === "glasses" && <>
             <ellipse cx="40" cy="43.5" rx="6.5" ry="5" fill="none" stroke="rgba(255,255,255,0.7)" strokeWidth="1.3" />
@@ -182,21 +182,21 @@ function Avatar({ config, size = 80 }) {
           <path d="M18 100 Q18 70 35 66 Q50 75 65 66 Q82 70 82 100Z" fill={shirt} />
           <rect x="44" y="65" width="5" height="10" rx="1" fill="rgba(255,255,255,0.2)" />
           <rect x="51" y="65" width="5" height="10" rx="1" fill="rgba(255,255,255,0.2)" />
-
+ 
           {/* Neck */}
           <rect x="42" y="56" width="16" height="14" rx="3" fill={skin} />
-
+ 
           {/* Head */}
           <ellipse cx="50" cy="45" rx="19" ry="21" fill={skin} />
-
+ 
           {/* Ears */}
           <ellipse cx="31" cy="45" rx="4" ry="5" fill={skin} />
           <ellipse cx="69" cy="45" rx="4" ry="5" fill={skin} />
-
+ 
           {/* Hair */}
           <ellipse cx="50" cy="28" rx="20" ry="11" fill={hair} />
           <path d="M30 35 Q29 28 50 24 Q71 28 70 35 Q68 30 50 27 Q32 30 30 35Z" fill={hair} />
-
+ 
           {/* Eyes */}
           <ellipse cx="40" cy="44" rx="3.5" ry="3.5" fill="white" />
           <ellipse cx="60" cy="44" rx="3.5" ry="3.5" fill="white" />
@@ -204,17 +204,17 @@ function Avatar({ config, size = 80 }) {
           <circle cx="61" cy="44" r="2.2" fill="#1a0a00" />
           <circle cx="42" cy="43" r="0.8" fill="white" />
           <circle cx="62" cy="43" r="0.8" fill="white" />
-
+ 
           {/* Eyebrows - thicker/flatter */}
           <path d="M36 37.5 Q40 36.5 44 37.5" stroke={hair} strokeWidth="2.2" fill="none" strokeLinecap="round" />
           <path d="M56 37.5 Q60 36.5 64 37.5" stroke={hair} strokeWidth="2.2" fill="none" strokeLinecap="round" />
-
+ 
           {/* Nose */}
           <path d="M48 48 Q50 52 52 48" stroke={skin === "#FDDBB4" ? "#c8906a" : "#7a4a30"} strokeWidth="1.2" fill="none" strokeLinecap="round" />
-
+ 
           {/* Mouth */}
           <path d="M44 56 Q50 60 56 56" stroke="#a05050" strokeWidth="1.8" fill="none" strokeLinecap="round" />
-
+ 
           {/* Accessories */}
           {accessory === "glasses" && <>
             <circle cx="40" cy="44" r="7" fill="none" stroke="rgba(255,255,255,0.6)" strokeWidth="1.5" />
@@ -241,7 +241,7 @@ function Avatar({ config, size = 80 }) {
     </svg>
   );
 }
-
+ 
 // ── GLOBAL STYLES (injected once) ─────────────────────────────────────────────
 const CSS = `
   @import url('https://fonts.googleapis.com/css2?family=Nunito:wght@700;800;900&family=DM+Sans:wght@400;500;600&display=swap');
@@ -277,7 +277,7 @@ const CSS = `
   ::-webkit-scrollbar-track { background: transparent; }
   ::-webkit-scrollbar-thumb { background: rgba(255,255,255,.15); border-radius: 4px; }
 `;
-
+ 
 function StyleInject() {
   useEffect(() => {
     const el = document.createElement("style");
@@ -287,7 +287,7 @@ function StyleInject() {
   }, []);
   return null;
 }
-
+ 
 // ── BG DECORATION ─────────────────────────────────────────────────────────────
 function BgOrbs() {
   return (
@@ -298,39 +298,39 @@ function BgOrbs() {
     </div>
   );
 }
-
+ 
 // ── LOGO ──────────────────────────────────────────────────────────────────────
 function Logo({ subtitle }) {
   return (
     <div style={{ display: "flex", alignItems: "center", gap: 14, marginBottom: 32 }}>
       <div style={{ width: 52, height: 52, background: "linear-gradient(135deg, #FF441F, #ff6b3d)", borderRadius: 16, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 26, boxShadow: "0 8px 24px rgba(255,68,31,.4)", flexShrink: 0 }}>🍕</div>
       <div>
-        <div className="ra-display" style={{ fontSize: 24, fontWeight: 800, letterSpacing: "-.5px", background: "linear-gradient(90deg, #fff 60%, rgba(255,255,255,.5))", WebkitBackgroundClip: "text", WebkitTextFillColor: "transparent" }}>Rappi Academy</div>
+        <div className="ra-display" style={{ fontSize: 24, fontWeight: 800, letterSpacing: "-.5px", background: "linear-gradient(90deg, #fff 60%, rgba(255,255,255,.5))", WebkitBackgroundClip: "text", WebkitTextFillColor: "transparent" }}>BD Academy</div>
         {subtitle && <div style={{ fontSize: 12, color: "rgba(255,255,255,.4)", marginTop: 1 }}>{subtitle}</div>}
       </div>
     </div>
   );
 }
-
+ 
 // ── INPUT ─────────────────────────────────────────────────────────────────────
 function Input({ style, ...props }) {
   return <input style={{ width: "100%", padding: "13px 16px", background: "rgba(255,255,255,.06)", border: "1px solid rgba(255,255,255,.12)", borderRadius: 12, fontSize: 15, color: "#fff", fontFamily: "inherit", ...style }} {...props} />;
 }
-
+ 
 function Select({ style, children, ...props }) {
   return <select style={{ width: "100%", padding: "13px 16px", background: "#1a1a2e", border: "1px solid rgba(255,255,255,.12)", borderRadius: 12, fontSize: 14, color: "#fff", fontFamily: "inherit", ...style }} {...props}>{children}</select>;
 }
-
+ 
 // ── GLASS CARD ────────────────────────────────────────────────────────────────
 function Card({ children, style, className = "glass" }) {
   return <div className={className} style={{ borderRadius: 20, padding: 28, marginBottom: 16, ...style }}>{children}</div>;
 }
-
+ 
 // ── LABEL ─────────────────────────────────────────────────────────────────────
 function Label({ children }) {
   return <div style={{ fontSize: 10, fontWeight: 700, color: "rgba(255,255,255,.4)", textTransform: "uppercase", letterSpacing: "1px", marginBottom: 8 }}>{children}</div>;
 }
-
+ 
 // ── BUTTON ────────────────────────────────────────────────────────────────────
 function Btn({ children, onClick, style, variant = "primary", disabled }) {
   const base = { padding: "13px 20px", border: "none", borderRadius: 12, fontSize: 14, fontWeight: 700, cursor: disabled ? "not-allowed" : "pointer", fontFamily: "inherit", transition: "all .2s", opacity: disabled ? .5 : 1 };
@@ -343,7 +343,7 @@ function Btn({ children, onClick, style, variant = "primary", disabled }) {
   };
   return <button className={variant === "primary" || variant === "blue" ? "btn-primary" : ""} style={{ ...variants[variant], ...style }} onClick={onClick} disabled={disabled}>{children}</button>;
 }
-
+ 
 // ── SCORE BADGE ───────────────────────────────────────────────────────────────
 function ScoreBadge({ score }) {
   const color = score >= 80 ? "#27ae60" : score >= 60 ? "#f39c12" : "#e74c3c";
@@ -353,13 +353,13 @@ function ScoreBadge({ score }) {
     </div>
   );
 }
-
+ 
 // ── STATUS PILL ───────────────────────────────────────────────────────────────
 function Pill({ type }) {
   const cfg = type === "Presentó" ? { bg: "rgba(39,174,96,.15)", color: "#27ae60", border: "rgba(39,174,96,.3)" } : { bg: "rgba(243,156,18,.15)", color: "#f39c12", border: "rgba(243,156,18,.3)" };
   return <span style={{ padding: "3px 10px", borderRadius: 99, fontSize: 11, fontWeight: 700, background: cfg.bg, color: cfg.color, border: `1px solid ${cfg.border}` }}>{type}</span>;
 }
-
+ 
 // ── RESULTS TABLE ─────────────────────────────────────────────────────────────
 function ResultsTable({ session }) {
   const excEmails = (session.excusados || []).map(e => e.farmerEmail);
@@ -398,7 +398,7 @@ function ResultsTable({ session }) {
     </div>
   );
 }
-
+ 
 // ══════════════════════════════════════════════════════════════════════════════
 // MAIN APP
 // ══════════════════════════════════════════════════════════════════════════════
@@ -432,14 +432,14 @@ export default function App() {
   const [newQuiz, setNewQuiz] = useState({ title: "", questions: [] });
   const [editingQ, setEditingQ] = useState(null);
   const timerRef = useRef(null);
-
+ 
   useEffect(() => {
     if (!session || session.phase !== "question") return;
     if (session.timer <= 0) { endQuestion(); return; }
     timerRef.current = setTimeout(() => setSession(s => ({ ...s, timer: s.timer - 1 })), 1000);
     return () => clearTimeout(timerRef.current);
   }, [session?.timer, session?.phase]);
-
+ 
   function farmerLogin() {
     let ok = true;
     if (!email.endsWith("@rappi.com")) { setEmailErr("Usa tu correo @rappi.com"); ok = false; } else setEmailErr("");
@@ -493,22 +493,22 @@ export default function App() {
     setExcusaFarmerEmail(""); setExcusaOther(""); setExcusaReason(EXCUSE_REASONS[0]);
     setExcusaSuccess(true); setTimeout(() => setExcusaSuccess(false), 3000);
   }
-
+ 
   const q = session && session.currentQ >= 0 ? session.questions[session.currentQ] : null;
   const timerPct = q ? (session.timer / q.time) * 100 : 0;
   const timerColor = timerPct > 50 ? "#27ae60" : timerPct > 25 ? "#f39c12" : "#e74c3c";
-
+ 
   const pageStyle = { position: "relative", zIndex: 1, maxWidth: 480, margin: "0 auto", padding: "40px 20px" };
   const widePageStyle = { position: "relative", zIndex: 1, maxWidth: 900, margin: "0 auto", padding: "32px 20px" };
-
+ 
   // ── HOME ───────────────────────────────────────────────────────────────────
   if (view === "home") return (
     <div className="ra-root">
       <StyleInject />
       <BgOrbs />
       <div style={pageStyle}>
-        <div className="fade-up"><Logo subtitle="Training & Development · Farmers" /></div>
-
+        <div className="fade-up"><Logo subtitle="Business Development · Farmers" /></div>
+ 
         <Card className="glass fade-up-1">
           <div className="ra-display" style={{ fontSize: 18, fontWeight: 800, marginBottom: 24, color: "#fff" }}>Ingresar al Quiz</div>
           <div style={{ marginBottom: 16 }}>
@@ -523,7 +523,7 @@ export default function App() {
           </div>
           <Btn variant="primary" style={{ width: "100%" }} onClick={farmerLogin}>Entrar al Quiz →</Btn>
         </Card>
-
+ 
         {/* Supervisor */}
         <Card className="glass fade-up-2" style={{ padding: "16px 20px" }}>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
@@ -550,7 +550,7 @@ export default function App() {
             </div>
           )}
         </Card>
-
+ 
         {/* Admin */}
         <Card className="glass fade-up-3" style={{ padding: "16px 20px" }}>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
@@ -572,7 +572,7 @@ export default function App() {
       </div>
     </div>
   );
-
+ 
   // ── AVATAR ─────────────────────────────────────────────────────────────────
   if (view === "avatar") return (
     <div className="ra-root">
@@ -582,7 +582,7 @@ export default function App() {
         <Logo />
         <Card className="glass fade-up">
           <div className="ra-display" style={{ fontSize: 18, fontWeight: 800, marginBottom: 20, color: "#fff" }}>Tu personaje</div>
-
+ 
           {/* Avatar preview */}
           <div style={{ display: "flex", justifyContent: "center", marginBottom: 28 }}>
             <div style={{ position: "relative" }}>
@@ -593,7 +593,7 @@ export default function App() {
               </div>
             </div>
           </div>
-
+ 
           {/* Gender */}
           <div style={{ marginBottom: 20 }}>
             <Label>Género</Label>
@@ -605,7 +605,7 @@ export default function App() {
               ))}
             </div>
           </div>
-
+ 
           {/* Skin */}
           <div style={{ marginBottom: 16 }}>
             <Label>Tono de piel</Label>
@@ -613,7 +613,7 @@ export default function App() {
               {SKIN_TONES.map(c => <div key={c} className="swatch" onClick={() => setAvatar(a => ({ ...a, skin: c }))} style={{ width: 32, height: 32, borderRadius: "50%", background: c, border: avatar.skin === c ? "3px solid #FF441F" : "3px solid transparent", boxShadow: avatar.skin === c ? "0 0 0 2px rgba(255,68,31,.3)" : "none" }} />)}
             </div>
           </div>
-
+ 
           {/* Hair */}
           <div style={{ marginBottom: 16 }}>
             <Label>Color de cabello</Label>
@@ -621,7 +621,7 @@ export default function App() {
               {HAIR_COLORS.map(c => <div key={c} className="swatch" onClick={() => setAvatar(a => ({ ...a, hair: c }))} style={{ width: 32, height: 32, borderRadius: "50%", background: c, border: avatar.hair === c ? "3px solid #FF441F" : "3px solid rgba(255,255,255,.15)", boxShadow: avatar.hair === c ? "0 0 0 2px rgba(255,68,31,.3)" : "none" }} />)}
             </div>
           </div>
-
+ 
           {/* Shirt */}
           <div style={{ marginBottom: 16 }}>
             <Label>Color de camisa</Label>
@@ -629,7 +629,7 @@ export default function App() {
               {SHIRT_COLORS.map(c => <div key={c} className="swatch" onClick={() => setAvatar(a => ({ ...a, shirt: c }))} style={{ width: 32, height: 32, borderRadius: "50%", background: c, border: avatar.shirt === c ? "3px solid #FF441F" : "3px solid rgba(255,255,255,.15)", boxShadow: avatar.shirt === c ? "0 0 0 2px rgba(255,68,31,.3)" : "none" }} />)}
             </div>
           </div>
-
+ 
           {/* Accessories */}
           <div style={{ marginBottom: 24 }}>
             <Label>Accesorio</Label>
@@ -641,13 +641,13 @@ export default function App() {
               ))}
             </div>
           </div>
-
+ 
           <Btn variant="primary" style={{ width: "100%" }} onClick={() => setView("waiting")}>¡Listo, entrar! →</Btn>
         </Card>
       </div>
     </div>
   );
-
+ 
   // ── WAITING ────────────────────────────────────────────────────────────────
   if (view === "waiting") {
     if (session?.phase === "question") { setView("quiz"); return null; }
@@ -676,7 +676,7 @@ export default function App() {
       </div>
     );
   }
-
+ 
   // ── FARMER QUIZ ────────────────────────────────────────────────────────────
   if (view === "quiz") {
     if (!session || session.phase === "finished") {
@@ -772,7 +772,7 @@ export default function App() {
       </div>
     );
   }
-
+ 
   // ── SUPERVISOR ─────────────────────────────────────────────────────────────
   if (view === "supervisor") {
     const allSessions = [];
@@ -797,7 +797,7 @@ export default function App() {
             </div>
             <Btn variant="ghost" onClick={() => setView("home")}>Salir</Btn>
           </div>
-
+ 
           {/* Session selector */}
           <Card className="glass" style={{ padding: "16px 20px", marginBottom: 24 }}>
             <Label>Sesión</Label>
@@ -806,7 +806,7 @@ export default function App() {
               {allSessions.length === 0 && <option>No hay sesiones</option>}
             </Select>
           </Card>
-
+ 
           {target && (
             <div style={{ display: "grid", gridTemplateColumns: "340px 1fr", gap: 20 }}>
               {/* LEFT: excusa form */}
@@ -831,7 +831,7 @@ export default function App() {
                   {excusaSuccess && <div style={{ fontSize: 13, color: "#27ae60", marginBottom: 10, fontWeight: 700 }}>✓ Excusa registrada</div>}
                   <Btn variant="blue" style={{ width: "100%" }} onClick={() => submitExcusa(target.quizId)}>Registrar excusa</Btn>
                 </Card>
-
+ 
                 <div className="ra-display" style={{ fontSize: 13, fontWeight: 800, marginBottom: 10, color: "rgba(255,255,255,.5)" }}>Excusados ({(target.excusados || []).length})</div>
                 {(target.excusados || []).length === 0
                   ? <div style={{ color: "rgba(255,255,255,.2)", fontSize: 13, padding: "12px 0" }}>Sin excusas registradas.</div>
@@ -844,7 +844,7 @@ export default function App() {
                   ))
                 }
               </div>
-
+ 
               {/* RIGHT: results */}
               <div>
                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14 }}>
@@ -868,7 +868,7 @@ export default function App() {
       </div>
     );
   }
-
+ 
   // ── ADMIN HOME ─────────────────────────────────────────────────────────────
   if (view === "admin") return (
     <div className="ra-root">
@@ -898,7 +898,7 @@ export default function App() {
       </div>
     </div>
   );
-
+ 
   // ── ADMIN QUIZ LIST ────────────────────────────────────────────────────────
   if (view === "adminQuiz") return (
     <div className="ra-root">
@@ -908,37 +908,62 @@ export default function App() {
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 24 }}>
           <Btn variant="ghost" onClick={() => setView("admin")}>← Volver</Btn>
           <div className="ra-display" style={{ fontSize: 20, fontWeight: 800 }}>Mis Quices</div>
-          <Btn variant="mini" onClick={() => setView("adminCreate")}>+ Nuevo</Btn>
+          <Btn variant="mini" onClick={() => { setNewQuiz({ title: "", questions: [] }); setEditingQ(null); setView("adminCreate"); }}>+ Nuevo</Btn>
         </div>
+        {quizzes.length === 0 && (
+          <div className="glass" style={{ borderRadius: 18, padding: 40, textAlign: "center", color: "rgba(255,255,255,.3)" }}>
+            <div style={{ fontSize: 40, marginBottom: 12 }}>📋</div>
+            <div style={{ fontSize: 15 }}>No tienes quices aún. ¡Crea el primero!</div>
+          </div>
+        )}
         {quizzes.map(qz => (
           <div key={qz.id} className="glass" style={{ borderRadius: 18, padding: "20px 24px", marginBottom: 14, display: "flex", gap: 16, alignItems: "center" }}>
             <div style={{ flex: 1 }}>
               <div className="ra-display" style={{ fontSize: 17, fontWeight: 800, marginBottom: 4 }}>{qz.title}</div>
               <div style={{ fontSize: 13, color: "rgba(255,255,255,.35)" }}>{qz.questions.length} preguntas · {qz.sessions.length} sesión(es)</div>
             </div>
-            <div style={{ display: "flex", flexDirection: "column", gap: 8, alignItems: "flex-end" }}>
-              <Btn variant="primary" style={{ padding: "10px 20px" }} onClick={() => startSession(qz)}>▶ Iniciar</Btn>
-              <Btn variant="ghost" style={{ padding: "8px 16px", fontSize: 12 }} onClick={() => setView("adminHistory")}>Historial</Btn>
+            <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", justifyContent: "flex-end" }}>
+              <Btn variant="primary" style={{ padding: "10px 18px", fontSize: 13 }} onClick={() => startSession(qz)}>▶ Iniciar</Btn>
+              <Btn variant="ghost" style={{ padding: "9px 16px", fontSize: 13 }} onClick={() => {
+                setNewQuiz({ ...qz, _editId: qz.id });
+                setEditingQ(null);
+                setView("adminCreate");
+              }}>✏️ Editar</Btn>
+              <Btn variant="ghost" style={{ padding: "9px 16px", fontSize: 12 }} onClick={() => setView("adminHistory")}>📊 Historial</Btn>
+              <button onClick={() => {
+                if (window.confirm(`¿Eliminar "${qz.title}"? Esta acción no se puede deshacer.`)) {
+                  setQuizzes(prev => prev.filter(q => q.id !== qz.id));
+                }
+              }} style={{ padding: "9px 14px", background: "rgba(231,76,60,.12)", border: "1px solid rgba(231,76,60,.3)", borderRadius: 10, color: "#e74c3c", fontWeight: 700, cursor: "pointer", fontFamily: "inherit", fontSize: 13 }}>🗑️</button>
             </div>
           </div>
         ))}
       </div>
     </div>
   );
-
-  // ── ADMIN CREATE ───────────────────────────────────────────────────────────
+ 
+  // ── ADMIN CREATE / EDIT ────────────────────────────────────────────────────
   if (view === "adminCreate") {
+    const isEditing = !!newQuiz._editId;
     function addQ(type) { setNewQuiz(nq => ({ ...nq, questions: [...nq.questions, { id: genCode(), type, text: "", time: 20, options: type === "truefalse" ? ["Verdadero", "Falso"] : ["", "", "", ""], correct: type === "multi" ? [] : 0 }] })); setEditingQ(newQuiz.questions.length); }
-    function saveQuiz() { if (!newQuiz.title) return; setQuizzes(prev => [...prev, { ...newQuiz, id: genCode(), sessions: [] }]); setNewQuiz({ title: "", questions: [] }); setEditingQ(null); setView("adminQuiz"); }
+    function saveQuiz() {
+      if (!newQuiz.title) return;
+      if (isEditing) {
+        setQuizzes(prev => prev.map(q => q.id === newQuiz._editId ? { ...newQuiz, id: newQuiz._editId, sessions: q.sessions } : q));
+      } else {
+        setQuizzes(prev => [...prev, { ...newQuiz, id: genCode(), sessions: [] }]);
+      }
+      setNewQuiz({ title: "", questions: [] }); setEditingQ(null); setView("adminQuiz");
+    }
     return (
       <div className="ra-root">
         <StyleInject />
         <BgOrbs />
         <div style={widePageStyle}>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 24 }}>
-            <Btn variant="ghost" onClick={() => setView("admin")}>← Volver</Btn>
-            <div className="ra-display" style={{ fontSize: 20, fontWeight: 800 }}>Crear Quiz</div>
-            <Btn variant="primary" style={{ padding: "10px 20px" }} onClick={saveQuiz} disabled={!newQuiz.title}>Guardar</Btn>
+            <Btn variant="ghost" onClick={() => setView("adminQuiz")}>← Volver</Btn>
+            <div className="ra-display" style={{ fontSize: 20, fontWeight: 800 }}>{isEditing ? "✏️ Editar Quiz" : "Crear Quiz"}</div>
+            <Btn variant="primary" style={{ padding: "10px 20px" }} onClick={saveQuiz} disabled={!newQuiz.title}>{isEditing ? "Guardar cambios" : "Guardar"}</Btn>
           </div>
           <Card className="glass">
             <Label>Título del quiz</Label>
@@ -974,7 +999,7 @@ export default function App() {
       </div>
     );
   }
-
+ 
   // ── ADMIN HISTORY ──────────────────────────────────────────────────────────
   if (view === "adminHistory") return (
     <div className="ra-root">
@@ -1018,7 +1043,7 @@ export default function App() {
       </div>
     </div>
   );
-
+ 
   // ── ADMIN LIVE ─────────────────────────────────────────────────────────────
   if (view === "adminLive") {
     if (!session) return null;
@@ -1032,7 +1057,7 @@ export default function App() {
           <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
             <div style={{ width: 36, height: 36, background: "linear-gradient(135deg,#FF441F,#ff6b3d)", borderRadius: 10, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 18 }}>🍕</div>
             <div>
-              <div className="ra-display" style={{ fontWeight: 800, fontSize: 14, letterSpacing: "-.2px" }}>Rappi Academy <span style={{ color: "#FF441F" }}>LIVE</span></div>
+              <div className="ra-display" style={{ fontWeight: 800, fontSize: 14, letterSpacing: "-.2px" }}>BD Academy <span style={{ color: "#FF441F" }}>LIVE</span></div>
               <div style={{ color: "rgba(255,255,255,.3)", fontSize: 11 }}>{session.quiz.title}</div>
             </div>
           </div>
@@ -1042,7 +1067,7 @@ export default function App() {
             <Btn variant="ghost" style={{ fontSize: 12, padding: "7px 14px" }} onClick={() => setView("admin")}>Salir</Btn>
           </div>
         </div>
-
+ 
         {/* WAITING */}
         {session.phase === "waiting" && (
           <div style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", minHeight: "80vh", textAlign: "center", padding: 48 }}>
@@ -1056,7 +1081,7 @@ export default function App() {
             </div>
           </div>
         )}
-
+ 
         {/* QUESTION / PAUSED */}
         {(session.phase === "question" || session.phase === "paused") && q && (
           <div style={{ padding: "20px 32px", maxWidth: 860, margin: "0 auto" }}>
@@ -1065,7 +1090,7 @@ export default function App() {
               {session.questions.map((_, i) => <div key={i} style={{ height: 4, width: i === session.currentQ ? 24 : 12, borderRadius: 99, background: i < session.currentQ ? "#FF441F" : i === session.currentQ ? "#fff" : "rgba(255,255,255,.15)", transition: "all .3s" }} />)}
             </div>
             <div style={{ textAlign: "center", fontSize: 12, color: "rgba(255,255,255,.3)", marginBottom: 20 }}>Pregunta {session.currentQ + 1} de {session.questions.length}</div>
-
+ 
             {/* Timer + controls block */}
             <div style={{ background: "rgba(255,255,255,.04)", border: "1px solid rgba(255,255,255,.08)", borderRadius: 20, padding: "18px 24px", marginBottom: 20, display: "flex", alignItems: "center", gap: 20 }}>
               <div className="ra-display" style={{ fontSize: 64, fontWeight: 900, minWidth: 80, color: timerColor, lineHeight: 1, textShadow: `0 0 20px ${timerColor}60`, textAlign: "center", transition: "color .5s" }}>
@@ -1093,13 +1118,13 @@ export default function App() {
                 <Btn variant="ghost" style={{ padding: "9px 14px", fontSize: 13, color: "rgba(255,255,255,.3)" }} onClick={endQuiz}>⏹ Fin</Btn>
               </div>
             </div>
-
+ 
             {/* Question */}
             <div style={{ background: "rgba(255,255,255,.04)", border: "1px solid rgba(255,255,255,.08)", borderLeft: "4px solid rgba(255,68,31,.5)", borderRadius: 18, padding: "22px 28px", marginBottom: 18 }}>
               <div style={{ fontSize: 10, fontWeight: 700, color: "#FF441F", textTransform: "uppercase", letterSpacing: "1.2px", marginBottom: 10 }}>{q.type === "truefalse" ? "Verdadero / Falso" : q.type === "multi" ? "Selección múltiple" : "Opción única"}</div>
               <div className="ra-display" style={{ fontSize: 22, fontWeight: 800, lineHeight: 1.4 }}>{q.text}</div>
             </div>
-
+ 
             {/* Options */}
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
               {q.options.map((opt, i) => (
@@ -1111,7 +1136,7 @@ export default function App() {
             </div>
           </div>
         )}
-
+ 
         {/* REVEAL */}
         {session.phase === "reveal" && q && (
           <div style={{ padding: 40, maxWidth: 800, margin: "0 auto", textAlign: "center" }}>
@@ -1137,7 +1162,7 @@ export default function App() {
               : <Btn variant="primary" style={{ padding: "16px 44px", fontSize: 17, background: "linear-gradient(135deg,#1a7340,#27ae60)", boxShadow: "0 8px 24px rgba(26,115,64,.4)" }} onClick={endQuiz}>Finalizar quiz ✓</Btn>}
           </div>
         )}
-
+ 
         {/* FINISHED */}
         {session.phase === "finished" && (
           <div style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", minHeight: "80vh", textAlign: "center", padding: 48 }}>
@@ -1160,6 +1185,6 @@ export default function App() {
       </div>
     );
   }
-
+ 
   return null;
 }
