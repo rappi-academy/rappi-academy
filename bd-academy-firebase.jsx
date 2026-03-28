@@ -280,6 +280,8 @@ export default function App() {
       if (found) {
         const data = { id: found.id, ...found.data() };
         setLiveSession(data);
+        // Register farmer in the session
+        registerFarmerInSession(found.id);
         if (data.phase === "question") setView("quiz");
         if (data.phase === "finished") setView("quiz");
       }
@@ -287,7 +289,17 @@ export default function App() {
     return () => unsub();
   }, [quizCode, view]);
 
-  // ── Listen to live session (quiz side) ───────────────────────────────────
+  // ── Admin: listen to own session for real participant count ──────────────
+  useEffect(() => {
+    if (!session?.id || view !== "adminLive") return;
+    const unsub = onSnapshot(doc(db, "sessions", session.id), snap => {
+      if (snap.exists()) {
+        const data = snap.data();
+        setParticipants((data.registeredFarmers || []).length);
+      }
+    });
+    return () => unsub();
+  }, [session?.id, view]);
   useEffect(() => {
     if (!liveSession?.id || view !== "quiz") return;
     if (sessionUnsubRef.current) sessionUnsubRef.current();
@@ -314,6 +326,20 @@ export default function App() {
     if (!email.endsWith("@rappi.com")) { setEmailErr("Usa tu correo @rappi.com"); ok = false; } else setEmailErr("");
     if (!quizCode || quizCode.length !== 6) { setCodeErr("Código de 6 dígitos requerido"); ok = false; } else setCodeErr("");
     if (ok) setView("avatar");
+  }
+
+  // Register farmer in Firestore when they enter the lobby
+  async function registerFarmerInSession(sessionId) {
+    try {
+      const sessionRef = doc(db, "sessions", sessionId);
+      const snap = await getDoc(sessionRef);
+      if (!snap.exists()) return;
+      const data = snap.data();
+      const registered = data.registeredFarmers || [];
+      if (!registered.includes(email)) {
+        await updateDoc(sessionRef, { registeredFarmers: [...registered, email] });
+      }
+    } catch(e) { console.error("Error registering farmer:", e); }
   }
 
   function adminLogin() { if (adminPwd === ADMIN_CODE) { setView("admin"); setAdminErr(""); } else setAdminErr("Código incorrecto"); }
@@ -348,7 +374,7 @@ export default function App() {
     setLoading(true);
     const code = genCode();
     const qs = quiz.questions.map(q => ({ ...q, _opts: shuffle(q.options.map((o, i) => ({ text: o, orig: i }))) }));
-    const sessionData = { quizId: quiz.id, quizTitle: quiz.title, sessionCode: code, questions: qs, currentQ: -1, phase: "waiting", timer: 0, participants: 0, farmerResults: [], excusados: [], createdAt: serverTimestamp() };
+    const sessionData = { quizId: quiz.id, quizTitle: quiz.title, sessionCode: code, questions: qs, currentQ: -1, phase: "waiting", timer: 0, registeredFarmers: [], answers: {}, excusados: [], createdAt: serverTimestamp() };
     const ref = await addDoc(collection(db, "sessions"), sessionData);
     setSession({ ...sessionData, id: ref.id });
     setParticipants(0); setFarmerAnswers([]);
@@ -365,7 +391,6 @@ export default function App() {
     setSession(s => ({ ...s, ...updates }));
     await updateDoc(doc(db, "sessions", session.id), updates);
     setAnswered(false); setCurrentAnswer(null);
-    setParticipants(p => p + Math.floor(Math.random() * 8) + 3);
   }
 
   async function endQuestion() {
@@ -377,28 +402,79 @@ export default function App() {
 
   async function endQuiz() {
     clearTimeout(timerRef.current);
-    const fakeResults = Array.from({ length: Math.max(participants, 1) }, (_, i) => {
-      const totalQ = session.questions.length; const ans = Math.max(1, Math.floor(Math.random() * totalQ) + Math.max(0, totalQ - 2));
-      const correct = Math.floor(Math.random() * (ans + 1));
-      return { email: `farmer${i + 1}.demo@rappi.com`, totalQ, answered: ans, correct, incorrect: ans - correct, noAnswer: totalQ - ans };
+    // Get real session data from Firestore
+    const sessionRef = doc(db, "sessions", session.id);
+    const snap = await getDoc(sessionRef);
+    const sessionData = snap.exists() ? snap.data() : {};
+    const registeredFarmers = sessionData.registeredFarmers || [];
+    const rawAnswers = sessionData.answers || {};
+    const totalQ = session.questions.length;
+    const excusados = sessionData.excusados || [];
+    const excusadoEmails = excusados.map(e => e.farmerEmail);
+
+    // Build real results per farmer
+    const farmerResults = registeredFarmers.map(farmerEmail => {
+      const key = farmerEmail.replace(/\./g, "_").replace(/@/g, "_at_");
+      const farmerAnswersList = rawAnswers[key] || [];
+      let correct = 0; let incorrect = 0;
+      farmerAnswersList.forEach(({ qIdx, answer }) => {
+        const q = session.questions[qIdx];
+        if (!q) return;
+        const isCorrect = Array.isArray(q.correct) ? q.correct.includes(answer) : q.correct === answer;
+        if (isCorrect) correct++; else incorrect++;
+      });
+      const answered = farmerAnswersList.length;
+      const noAnswer = totalQ - answered;
+      return { email: farmerEmail, totalQ, answered, correct, incorrect, noAnswer };
     });
-    const avg = fakeResults.length ? Math.round(fakeResults.reduce((s, f) => s + pct(f.correct, f.totalQ), 0) / fakeResults.length) : 0;
-    const newSessionRecord = { id: genCode(), date: new Date().toISOString().slice(0, 10), participants, avgScore: avg, farmerResults: fakeResults, excusados: session.excusados || [] };
-    const updates = { phase: "finished", farmerResults: fakeResults };
+
+    // Excusados que no están en registeredFarmers los agregamos como row separado
+    const excusadosNoRegistrados = excusados.filter(e => !registeredFarmers.includes(e.farmerEmail));
+
+    // Promedio solo de farmers activos (no excusados)
+    const activeFarmers = farmerResults.filter(f => !excusadoEmails.includes(f.email));
+    const avg = activeFarmers.length ? Math.round(activeFarmers.reduce((s, f) => s + pct(f.correct, f.totalQ), 0) / activeFarmers.length) : 0;
+
+    const newSessionRecord = {
+      id: genCode(),
+      date: new Date().toISOString().slice(0, 10),
+      participants: registeredFarmers.length,
+      avgScore: avg,
+      farmerResults,
+      excusados,
+    };
+
+    const updates = { phase: "finished", farmerResults };
     setSession(s => ({ ...s, ...updates }));
-    if (session?.id) await updateDoc(doc(db, "sessions", session.id), updates);
+    await updateDoc(sessionRef, updates);
+
     const quizRef = doc(db, "quizzes", session.quizId);
     const quizSnap = await getDoc(quizRef);
     if (quizSnap.exists()) {
       const existing = quizSnap.data().sessions || [];
       await updateDoc(quizRef, { sessions: [...existing, newSessionRecord] });
     }
+    setParticipants(registeredFarmers.length);
   }
 
-  function submitAnswer(origIdx) {
+  async function submitAnswer(origIdx) {
     if (answered) return;
     setCurrentAnswer(origIdx); setAnswered(true);
-    setFarmerAnswers(a => [...a, { qIdx: liveSession?.currentQ ?? 0, answer: origIdx }]);
+    const qIdx = liveSession?.currentQ ?? 0;
+    setFarmerAnswers(a => [...a, { qIdx, answer: origIdx }]);
+    // Save answer to Firestore
+    if (liveSession?.id) {
+      try {
+        const sessionRef = doc(db, "sessions", liveSession.id);
+        const snap = await getDoc(sessionRef);
+        if (snap.exists()) {
+          const answers = snap.data().answers || {};
+          const farmerAnswersList = answers[email] || [];
+          farmerAnswersList.push({ qIdx, answer: origIdx });
+          await updateDoc(sessionRef, { [`answers.${email.replace(/\./g, "_").replace(/@/g, "_at_")}`]: farmerAnswersList });
+        }
+      } catch(e) { console.error("Error saving answer:", e); }
+    }
   }
 
   async function submitExcusa(targetQuizId) {
@@ -844,7 +920,6 @@ export default function App() {
             <div className="ra-display" style={{ fontSize: 64, fontWeight: 900, color: "#FF441F", letterSpacing: 12, marginBottom: 40, textShadow: "0 0 40px rgba(255,68,31,.5)" }}>{session.sessionCode}</div>
             <div style={{ display: "flex", gap: 12 }}>
               <Btn variant="primary" style={{ padding: "16px 48px", fontSize: 18 }} onClick={nextQuestion}>▶ Iniciar Quiz</Btn>
-              <Btn variant="ghost" onClick={() => setParticipants(p => p + Math.floor(Math.random() * 5) + 2)}>+ Simular farmers</Btn>
             </div>
           </div>
         )}
