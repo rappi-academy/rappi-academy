@@ -232,11 +232,11 @@ function ResultsTable({ session }) {
 export default function App() {
   const [view, setView] = useState("home");
   const [loading, setLoading] = useState(false);
-  const [email, setEmail] = useState("");
-  const [quizCode, setQuizCode] = useState("");
+  const [email, setEmail] = useState(() => localStorage.getItem("bda_email") || "");
+  const [quizCode, setQuizCode] = useState(() => localStorage.getItem("bda_code") || "");
   const [emailErr, setEmailErr] = useState("");
   const [codeErr, setCodeErr] = useState("");
-  const [avatar, setAvatar] = useState({ gender: "male", skin: SKIN_TONES[0], hair: HAIR_COLORS[0], shirt: SHIRT_COLORS[0], accessory: "none" });
+  const [avatar, setAvatar] = useState(() => { try { return JSON.parse(localStorage.getItem("bda_avatar")) || { gender: "male", skin: SKIN_TONES[0], hair: HAIR_COLORS[0], shirt: SHIRT_COLORS[0], accessory: "none" }; } catch { return { gender: "male", skin: SKIN_TONES[0], hair: HAIR_COLORS[0], shirt: SHIRT_COLORS[0], accessory: "none" }; } });
   const [adminPwd, setAdminPwd] = useState("");
   const [adminErr, setAdminErr] = useState("");
   const [showAdmin, setShowAdmin] = useState(false);
@@ -253,15 +253,33 @@ export default function App() {
   const [excusaSuccess, setExcusaSuccess] = useState(false);
   const [quizzes, setQuizzes] = useState([]);
   const [session, setSession] = useState(null);
-  const [liveSession, setLiveSession] = useState(null); // Firestore live session
-  const [farmerAnswers, setFarmerAnswers] = useState([]);
+  const [liveSession, setLiveSession] = useState(null);
+  const [farmerAnswers, setFarmerAnswers] = useState(() => { try { return JSON.parse(localStorage.getItem("bda_answers")) || []; } catch { return []; } });
   const [currentAnswer, setCurrentAnswer] = useState(null);
   const [answered, setAnswered] = useState(false);
   const [participants, setParticipants] = useState(0);
   const [newQuiz, setNewQuiz] = useState({ title: "", questions: [] });
   const [editingQ, setEditingQ] = useState(null);
+  const [revealDistribution, setRevealDistribution] = useState({});
   const timerRef = useRef(null);
   const sessionUnsubRef = useRef(null);
+
+  // ── Persist farmer state to localStorage ─────────────────────────────────
+  useEffect(() => { if (email) localStorage.setItem("bda_email", email); }, [email]);
+  useEffect(() => { if (quizCode) localStorage.setItem("bda_code", quizCode); }, [quizCode]);
+  useEffect(() => { localStorage.setItem("bda_avatar", JSON.stringify(avatar)); }, [avatar]);
+  useEffect(() => { localStorage.setItem("bda_answers", JSON.stringify(farmerAnswers)); }, [farmerAnswers]);
+  useEffect(() => { if (["waiting","quiz"].includes(view)) localStorage.setItem("bda_view", view); if (view === "home") { localStorage.removeItem("bda_view"); localStorage.removeItem("bda_answers"); } }, [view]);
+
+  // ── Restore farmer session on page reload ─────────────────────────────────
+  useEffect(() => {
+    const savedEmail = localStorage.getItem("bda_email");
+    const savedCode = localStorage.getItem("bda_code");
+    const savedView = localStorage.getItem("bda_view");
+    if (savedEmail && savedCode && (savedView === "waiting" || savedView === "quiz")) {
+      setView("waiting"); // will pick up live session via listener
+    }
+  }, []);
 
   // ── Load quizzes from Firestore ──────────────────────────────────────────
   useEffect(() => {
@@ -403,10 +421,30 @@ export default function App() {
     setSession(s => ({ ...s, ...updates }));
     await updateDoc(doc(db, "sessions", session.id), updates);
     setAnswered(false); setCurrentAnswer(null);
+    setRevealDistribution({});
   }
 
   async function endQuestion() {
     clearTimeout(timerRef.current);
+    // Calculate real distribution from Firestore answers
+    if (session?.id && activeQ) {
+      const snap = await getDoc(doc(db, "sessions", session.id));
+      if (snap.exists()) {
+        const rawAnswers = snap.data().answers || {};
+        const currentQ = session.currentQ;
+        const dist = {};
+        activeQ.options.forEach((_, i) => { dist[i] = 0; });
+        let total = 0;
+        Object.values(rawAnswers).forEach(arr => {
+          const ans = arr.find(a => a.qIdx === currentQ);
+          if (ans !== undefined) { dist[ans.answer] = (dist[ans.answer] || 0) + 1; total++; }
+        });
+        // Convert to percentages
+        const pctDist = {};
+        activeQ.options.forEach((_, i) => { pctDist[i] = total > 0 ? Math.round((dist[i] / total) * 100) : 0; });
+        setRevealDistribution(pctDist);
+      }
+    }
     const updates = { phase: "reveal", timer: 0 };
     setSession(s => ({ ...s, ...updates }));
     if (session?.id) await updateDoc(doc(db, "sessions", session.id), updates);
@@ -541,7 +579,6 @@ export default function App() {
             <div style={{ marginBottom: 12 }}><Label>Tu correo @rappi.com</Label><Input placeholder="supervisor@rappi.com" value={superEmail} onChange={e => { setSuperEmail(e.target.value); setSuperEmailErr(""); }} style={superEmailErr ? { borderColor: "#e74c3c" } : {}} />{superEmailErr && <div style={{ fontSize: 12, color: "#e74c3c", marginTop: 4 }}>{superEmailErr}</div>}</div>
             <div style={{ marginBottom: 16 }}><Label>Código de supervisor</Label><Input type="password" placeholder="Código" value={superCode} onChange={e => { setSuperCode(e.target.value); setSuperCodeErr(""); }} onKeyDown={e => e.key === "Enter" && superLogin()} style={superCodeErr ? { borderColor: "#e74c3c" } : {}} />{superCodeErr && <div style={{ fontSize: 12, color: "#e74c3c", marginTop: 4 }}>{superCodeErr}</div>}</div>
             <Btn variant="blue" style={{ width: "100%" }} onClick={superLogin}>Entrar como Supervisor</Btn>
-            <div style={{ fontSize: 11, color: "rgba(255,255,255,.2)", marginTop: 8, textAlign: "center" }}>Código demo: <b style={{ color: "rgba(255,255,255,.4)" }}>SUPER9</b></div>
           </div>}
         </Card>
         <Card className="glass fade-up-3" style={{ padding: "16px 20px" }}>
@@ -700,7 +737,9 @@ export default function App() {
   if (view === "supervisor") {
     const allSessions = [];
     quizzes.forEach(quiz => (quiz.sessions || []).forEach(s => allSessions.push({ ...s, quizTitle: quiz.title, quizId: quiz.id })));
-    if (session && session.phase !== "finished") allSessions.unshift({ id: "live", date: "🔴 EN VIVO", quizTitle: session.quizTitle, quizId: session.quizId, isLive: true, farmerResults: session.farmerResults || [], excusados: session.excusados || [] });
+    if (session && session.phase !== "finished") {
+      allSessions.unshift({ id: "live", date: "🔴 EN VIVO", quizTitle: session.quizTitle, quizId: session.quizId, isLive: true, farmerResults: session.farmerResults || [], excusados: session.excusados || [] });
+    }
     const target = superSession || (allSessions.length ? allSessions[0] : null);
     const excEmails = (target?.excusados || []).map(e => e.farmerEmail);
     const active = (target?.farmerResults || []).filter(r => !excEmails.includes(r.email));
@@ -715,45 +754,72 @@ export default function App() {
             </div>
             <Btn variant="ghost" onClick={() => setView("home")}>Salir</Btn>
           </div>
-          <Card className="glass" style={{ padding: "16px 20px", marginBottom: 24 }}>
-            <Label>Sesión</Label>
-            <Select value={target?.id || ""} onChange={e => { const found = allSessions.find(s => s.id === e.target.value); setSuperSession(found || null); }}>
-              {allSessions.map(s => <option key={s.id} value={s.id}>{s.quizTitle} · {s.date}</option>)}
-              {allSessions.length === 0 && <option>No hay sesiones</option>}
-            </Select>
-          </Card>
-          {target && (
-            <div style={{ display: "grid", gridTemplateColumns: "340px 1fr", gap: 20 }}>
-              <div>
-                <div className="ra-display" style={{ fontSize: 14, fontWeight: 800, marginBottom: 12, color: "rgba(255,255,255,.7)" }}>Registrar Excusado</div>
-                <Card className="glass">
-                  <div style={{ marginBottom: 14 }}><Label>Correo del farmer</Label><Input placeholder="farmer@rappi.com" value={excusaFarmerEmail} onChange={e => { setExcusaFarmerEmail(e.target.value); setExcusaErr(""); }} style={excusaErr ? { borderColor: "#e74c3c" } : {}} /></div>
-                  <div style={{ marginBottom: excusaReason === "Otra razón" ? 14 : 20 }}><Label>Razón</Label><Select value={excusaReason} onChange={e => setExcusaReason(e.target.value)}>{EXCUSE_REASONS.map(r => <option key={r}>{r}</option>)}</Select></div>
-                  {excusaReason === "Otra razón" && <div style={{ marginBottom: 20 }}><Label>Especifica</Label><Input placeholder="Describe la razón..." value={excusaOther} onChange={e => setExcusaOther(e.target.value)} /></div>}
-                  {excusaErr && <div style={{ fontSize: 12, color: "#e74c3c", marginBottom: 10, fontWeight: 600 }}>{excusaErr}</div>}
-                  {excusaSuccess && <div style={{ fontSize: 13, color: "#27ae60", marginBottom: 10, fontWeight: 700 }}>✓ Excusa registrada</div>}
-                  <Btn variant="blue" style={{ width: "100%" }} onClick={() => submitExcusa(target.quizId)}>Registrar excusa</Btn>
-                </Card>
-                <div className="ra-display" style={{ fontSize: 13, fontWeight: 800, marginBottom: 10, color: "rgba(255,255,255,.5)" }}>Excusados ({(target.excusados || []).length})</div>
-                {(target.excusados || []).length === 0 ? <div style={{ color: "rgba(255,255,255,.2)", fontSize: 13 }}>Sin excusas registradas.</div>
-                  : (target.excusados || []).map((e, i) => <div key={i} className="glass" style={{ borderRadius: 12, padding: "12px 16px", marginBottom: 8, borderLeft: "3px solid #4A90D9" }}><div style={{ fontWeight: 700, fontSize: 13 }}>{e.farmerEmail}</div><div style={{ fontSize: 12, color: "rgba(255,255,255,.4)", marginTop: 2 }}>{e.reason}</div><div style={{ fontSize: 11, color: "rgba(255,255,255,.2)", marginTop: 2 }}>{e.timestamp}</div></div>)}
+
+          {/* Empty state */}
+          {allSessions.length === 0 && (
+            <Card className="glass" style={{ textAlign: "center", padding: 48 }}>
+              <div style={{ fontSize: 40, marginBottom: 16 }}>📋</div>
+              <div className="ra-display" style={{ fontSize: 16, fontWeight: 800, marginBottom: 8 }}>No hay sesiones disponibles aún</div>
+              <div style={{ fontSize: 13, color: "rgba(255,255,255,.35)", lineHeight: 1.7 }}>
+                Las sesiones aparecen aquí cuando el trainer inicia un quiz.<br/>
+                Puedes registrar excusados durante o después de cualquier sesión.
               </div>
-              <div>
-                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14 }}>
-                  <div className="ra-display" style={{ fontSize: 14, fontWeight: 800, color: "rgba(255,255,255,.7)" }}>Resultados</div>
-                  <Btn variant="green" onClick={() => openCSV(buildCSV(target, target.quizTitle), target.quizTitle)}>↓ Exportar CSV</Btn>
-                </div>
-                <div style={{ display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 10, marginBottom: 16 }}>
-                  {[["Presentaron", active.length, "#FF441F"], ["Excusados", (target.excusados || []).length, "#4A90D9"], [`${avg}% promedio`, "excl. excusados", "#27ae60"]].map(([v, l, c], i) => (
-                    <div key={i} className="glass" style={{ borderRadius: 14, padding: "14px", textAlign: "center" }}>
-                      <div style={{ fontSize: i === 2 ? 18 : 24, fontWeight: 900, color: c, fontFamily: "'Nunito',sans-serif" }}>{v}</div>
-                      <div style={{ fontSize: 10, color: "rgba(255,255,255,.3)", marginTop: 3 }}>{l}</div>
+            </Card>
+          )}
+
+          {allSessions.length > 0 && (
+            <>
+              <Card className="glass" style={{ padding: "16px 20px", marginBottom: 24 }}>
+                <Label>Selecciona la sesión</Label>
+                <Select value={target?.id || ""} onChange={e => { const found = allSessions.find(s => s.id === e.target.value); setSuperSession(found || null); }}>
+                  {allSessions.map(s => <option key={s.id} value={s.id}>{s.isLive ? "🔴 EN VIVO — " : ""}{s.quizTitle} · {s.date}</option>)}
+                </Select>
+              </Card>
+              {target && (
+                <div style={{ display: "grid", gridTemplateColumns: "340px 1fr", gap: 20 }}>
+                  <div>
+                    <div className="ra-display" style={{ fontSize: 14, fontWeight: 800, marginBottom: 12, color: "rgba(255,255,255,.7)" }}>Registrar Excusado</div>
+                    <Card className="glass">
+                      <div style={{ marginBottom: 14 }}><Label>Correo del farmer</Label><Input placeholder="farmer@rappi.com" value={excusaFarmerEmail} onChange={e => { setExcusaFarmerEmail(e.target.value); setExcusaErr(""); }} style={excusaErr ? { borderColor: "#e74c3c" } : {}} /></div>
+                      <div style={{ marginBottom: excusaReason === "Otra razón" ? 14 : 20 }}><Label>Razón</Label><Select value={excusaReason} onChange={e => setExcusaReason(e.target.value)}>{EXCUSE_REASONS.map(r => <option key={r}>{r}</option>)}</Select></div>
+                      {excusaReason === "Otra razón" && <div style={{ marginBottom: 20 }}><Label>Especifica</Label><Input placeholder="Describe la razón..." value={excusaOther} onChange={e => setExcusaOther(e.target.value)} /></div>}
+                      {excusaErr && <div style={{ fontSize: 12, color: "#e74c3c", marginBottom: 10, fontWeight: 600 }}>{excusaErr}</div>}
+                      {excusaSuccess && <div style={{ fontSize: 13, color: "#27ae60", marginBottom: 10, fontWeight: 700 }}>✓ Excusa registrada</div>}
+                      <Btn variant="blue" style={{ width: "100%" }} onClick={() => submitExcusa(target.quizId)}>Registrar excusa</Btn>
+                    </Card>
+                    <div className="ra-display" style={{ fontSize: 13, fontWeight: 800, marginBottom: 10, color: "rgba(255,255,255,.5)" }}>Excusados en esta sesión ({(target.excusados || []).length})</div>
+                    {(target.excusados || []).length === 0
+                      ? <div style={{ color: "rgba(255,255,255,.2)", fontSize: 13 }}>Sin excusas registradas aún.</div>
+                      : (target.excusados || []).map((e, i) => (
+                        <div key={i} className="glass" style={{ borderRadius: 12, padding: "12px 16px", marginBottom: 8, borderLeft: "3px solid #4A90D9" }}>
+                          <div style={{ fontWeight: 700, fontSize: 13 }}>{e.farmerEmail}</div>
+                          <div style={{ fontSize: 12, color: "rgba(255,255,255,.4)", marginTop: 2 }}>{e.reason}</div>
+                          <div style={{ fontSize: 11, color: "rgba(255,255,255,.2)", marginTop: 2 }}>Por {e.supervisorEmail} · {e.timestamp}</div>
+                        </div>
+                      ))
+                    }
+                  </div>
+                  <div>
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14 }}>
+                      <div>
+                        <div className="ra-display" style={{ fontSize: 15, fontWeight: 800 }}>{target.quizTitle}</div>
+                        <div style={{ fontSize: 12, color: "rgba(255,255,255,.3)", marginTop: 2 }}>{target.date}</div>
+                      </div>
+                      <Btn variant="green" onClick={() => openCSV(buildCSV(target, target.quizTitle), target.quizTitle)}>↓ CSV</Btn>
                     </div>
-                  ))}
+                    <div style={{ display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 10, marginBottom: 16 }}>
+                      {[["Presentaron", active.length, "#FF441F"], ["Excusados", (target.excusados || []).length, "#4A90D9"], [`${avg}% promedio`, "excl. excusados", "#27ae60"]].map(([v, l, c], i) => (
+                        <div key={i} className="glass" style={{ borderRadius: 14, padding: "14px", textAlign: "center" }}>
+                          <div style={{ fontSize: i === 2 ? 18 : 24, fontWeight: 900, color: c, fontFamily: "'Nunito',sans-serif" }}>{v}</div>
+                          <div style={{ fontSize: 10, color: "rgba(255,255,255,.3)", marginTop: 3 }}>{l}</div>
+                        </div>
+                      ))}
+                    </div>
+                    <ResultsTable session={target} />
+                  </div>
                 </div>
-                <ResultsTable session={target} />
-              </div>
-            </div>
+              )}
+            </>
           )}
         </div>
       </div>
@@ -1000,7 +1066,7 @@ export default function App() {
             <div style={{ display: "flex", gap: 20, justifyContent: "center", marginBottom: 36, flexWrap: "wrap" }}>
               {activeQ.options.map((opt, i) => {
                 const isCorr = Array.isArray(activeQ.correct) ? activeQ.correct.includes(i) : activeQ.correct === i;
-                const p = isCorr ? Math.floor(Math.random() * 25) + 55 : Math.floor(Math.random() * 18) + 5;
+                const p = revealDistribution[i] ?? 0;
                 return (
                   <div key={i} style={{ textAlign: "center" }}>
                     <div style={{ height: 100, width: 70, background: "rgba(255,255,255,.04)", borderRadius: 10, display: "flex", alignItems: "flex-end", overflow: "hidden", border: `1px solid ${OCOLS[i]}20` }}>
