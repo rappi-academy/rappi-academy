@@ -433,24 +433,31 @@ export default function App() {
 
   async function endQuestion() {
     clearTimeout(timerRef.current);
-    // Delay to ensure all farmer answers have been written to Firestore
-    await new Promise(r => setTimeout(r, 800));
+    // Increase delay to ensure all farmer answers have been written to Firestore
+    await new Promise(r => setTimeout(r, 1200));
     // Calculate real distribution from Firestore answers
+    let pctDist = {};
+    let totalAnswered = 0;
     if (session?.id && activeQ) {
       const snap = await getDoc(doc(db, "sessions", session.id));
       if (snap.exists()) {
-        const rawAnswers = snap.data().answers || {};
+        const data = snap.data();
+        const rawAnswers = data.answers || {};
+        const registered = data.registeredFarmers || [];
         const currentQ = session.currentQ;
         const dist = {};
         activeQ.options.forEach((_, i) => { dist[i] = 0; });
-        let total = 0;
         Object.values(rawAnswers).forEach(arr => {
           const ans = arr.find(a => a.qIdx === currentQ);
-          if (ans !== undefined) { dist[ans.answer] = (dist[ans.answer] || 0) + 1; total++; }
+          if (ans !== undefined) { dist[ans.answer] = (dist[ans.answer] || 0) + 1; totalAnswered++; }
         });
-        const pctDist = {};
-        activeQ.options.forEach((_, i) => { pctDist[i] = total > 0 ? Math.round((dist[i] / total) * 100) : 0; });
+        // Store raw counts (not pct) so reveal can show real numbers
+        activeQ.options.forEach((_, i) => { pctDist[i] = dist[i]; });
+        // Store total registered for "no answer" calculation
+        pctDist._total = registered.length;
+        pctDist._answered = totalAnswered;
         setRevealDistribution(pctDist);
+        setParticipants(registered.length);
       }
     }
     const updates = { phase: "reveal", timer: 0 };
@@ -1081,67 +1088,82 @@ export default function App() {
         )}
 
         {session.phase === "reveal" && activeQ && (() => {
-          const total = participants || 1;
-          const correctCount = Object.values(revealDistribution).length > 0
-            ? (() => {
-                const corrKeys = Array.isArray(activeQ.correct) ? activeQ.correct : [activeQ.correct];
-                return corrKeys.reduce((sum, k) => sum + (Math.round((revealDistribution[k] ?? 0) / 100 * total)), 0);
-              })()
-            : 0;
-          const answeredCount = Object.values(revealDistribution).reduce((s, p) => s + Math.round(p / 100 * total), 0);
-          const incorrectCount = Math.max(0, answeredCount - correctCount);
-          const noAnswerCount = Math.max(0, total - answeredCount);
+          const OCOLS = ["#FF441F", "#4A90D9", "#27ae60", "#f39c12"];
+          const total = revealDistribution._total ?? participants ?? 1;
+          const answered = revealDistribution._answered ?? 0;
+          const noAnswer = Math.max(0, total - answered);
+          // Count correct answers
+          const corrKeys = Array.isArray(activeQ.correct) ? activeQ.correct : [activeQ.correct];
+          const correctCount = corrKeys.reduce((sum, k) => sum + (revealDistribution[k] ?? 0), 0);
+          const incorrectCount = Math.max(0, answered - correctCount);
           const asertividad = total > 0 ? Math.round((correctCount / total) * 100) : 0;
-          const color = asertividad >= 80 ? "#27ae60" : asertividad >= 60 ? "#f39c12" : "#e74c3c";
+          const circleColor = asertividad >= 80 ? "#27ae60" : asertividad >= 60 ? "#f39c12" : "#e74c3c";
           return (
-            <div style={{ padding: "32px 40px", maxWidth: 700, margin: "0 auto" }}>
-              <div style={{ textAlign: "center", marginBottom: 24 }}>
-                <div style={{ fontSize: 13, color: "rgba(255,255,255,.4)", marginBottom: 6 }}>Respuesta correcta:</div>
-                <div className="ra-display" style={{ fontSize: 28, fontWeight: 900, color: "#27ae60", textShadow: "0 0 30px rgba(39,174,96,.4)" }}>
+            <div style={{ padding: "24px 32px", maxWidth: 800, margin: "0 auto" }}>
+              {/* Header */}
+              <div style={{ textAlign: "center", marginBottom: 20 }}>
+                <div style={{ fontSize: 12, color: "rgba(255,255,255,.4)", marginBottom: 6 }}>Respuesta correcta:</div>
+                <div className="ra-display" style={{ fontSize: 26, fontWeight: 900, color: "#27ae60", textShadow: "0 0 30px rgba(39,174,96,.4)" }}>
                   {Array.isArray(activeQ.correct) ? activeQ.correct.map(i => activeQ.options[i]).join(", ") : activeQ.options[activeQ.correct]}
                 </div>
               </div>
-              <div style={{ display: "flex", gap: 24, alignItems: "center", marginBottom: 32 }}>
-                {/* Circle */}
-                <div style={{ flexShrink: 0, textAlign: "center" }}>
-                  <svg width="110" height="110" viewBox="0 0 110 110">
-                    <circle cx="55" cy="55" r="46" fill="none" stroke="rgba(255,255,255,.08)" strokeWidth="10" />
-                    <circle cx="55" cy="55" r="46" fill="none" stroke={color} strokeWidth="10"
-                      strokeDasharray={`${2 * Math.PI * 46}`}
-                      strokeDashoffset={`${2 * Math.PI * 46 * (1 - asertividad / 100)}`}
-                      strokeLinecap="round"
-                      transform="rotate(-90 55 55)"
-                      style={{ transition: "stroke-dashoffset 1s ease" }} />
-                    <text x="55" y="50" textAnchor="middle" fill="#fff" fontSize="22" fontWeight="900" fontFamily="Nunito,sans-serif">{asertividad}%</text>
-                    <text x="55" y="68" textAnchor="middle" fill="rgba(255,255,255,.4)" fontSize="10" fontFamily="DM Sans,sans-serif">asertividad</text>
-                  </svg>
-                </div>
-                {/* Horizontal bars */}
+
+              {/* Options grid - Kahoot style */}
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginBottom: 24 }}>
+                {activeQ.options.map((opt, i) => {
+                  const isCorr = Array.isArray(activeQ.correct) ? activeQ.correct.includes(i) : activeQ.correct === i;
+                  const count = revealDistribution[i] ?? 0;
+                  const pct = answered > 0 ? Math.round((count / answered) * 100) : 0;
+                  return (
+                    <div key={i} style={{ borderRadius: 14, padding: "14px 18px", background: isCorr ? "rgba(39,174,96,.2)" : "rgba(255,255,255,.05)", border: `2px solid ${isCorr ? "#27ae60" : "rgba(255,255,255,.1)"}`, position: "relative", overflow: "hidden" }}>
+                      {/* Fill bar */}
+                      <div style={{ position: "absolute", left: 0, top: 0, height: "100%", width: `${pct}%`, background: isCorr ? "rgba(39,174,96,.15)" : `${OCOLS[i]}15`, transition: "width 1s ease", borderRadius: 12 }} />
+                      <div style={{ position: "relative", display: "flex", alignItems: "center", gap: 10 }}>
+                        <span style={{ minWidth: 30, height: 30, background: isCorr ? "#27ae60" : OCOLS[i], borderRadius: 8, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 13, fontWeight: 800, color: "#fff", flexShrink: 0 }}>{String.fromCharCode(65 + i)}</span>
+                        <span style={{ flex: 1, fontSize: 14, fontWeight: 600, color: isCorr ? "#fff" : "rgba(255,255,255,.7)" }}>{opt}</span>
+                        <span style={{ fontSize: 16, fontWeight: 900, color: isCorr ? "#27ae60" : "rgba(255,255,255,.4)", minWidth: 40, textAlign: "right" }}>{count}</span>
+                        {isCorr && <span style={{ fontSize: 18 }}>✓</span>}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+
+              {/* Summary row */}
+              <div style={{ display: "flex", gap: 16, alignItems: "center" }}>
+                {/* Asertividad circle */}
+                <svg width="90" height="90" viewBox="0 0 90 90" style={{ flexShrink: 0 }}>
+                  <circle cx="45" cy="45" r="36" fill="none" stroke="rgba(255,255,255,.08)" strokeWidth="8" />
+                  <circle cx="45" cy="45" r="36" fill="none" stroke={circleColor} strokeWidth="8"
+                    strokeDasharray={`${2 * Math.PI * 36}`}
+                    strokeDashoffset={`${2 * Math.PI * 36 * (1 - asertividad / 100)}`}
+                    strokeLinecap="round" transform="rotate(-90 45 45)"
+                    style={{ transition: "stroke-dashoffset 1s ease" }} />
+                  <text x="45" y="40" textAnchor="middle" fill="#fff" fontSize="18" fontWeight="900" fontFamily="Nunito,sans-serif">{asertividad}%</text>
+                  <text x="45" y="55" textAnchor="middle" fill="rgba(255,255,255,.4)" fontSize="9" fontFamily="DM Sans,sans-serif">asertividad</text>
+                </svg>
+                {/* Bars */}
                 <div style={{ flex: 1 }}>
                   {[
-                    { label: "✓ Correctas", count: correctCount, color: "#27ae60", bg: "rgba(39,174,96,.15)" },
-                    { label: "✗ Incorrectas", count: incorrectCount, color: "#e74c3c", bg: "rgba(231,76,60,.15)" },
-                    { label: "— No respondió", count: noAnswerCount, color: "rgba(255,255,255,.3)", bg: "rgba(255,255,255,.05)" },
-                  ].map(({ label, count, color: c, bg }) => {
-                    const pct = total > 0 ? (count / total) * 100 : 0;
-                    return (
-                      <div key={label} style={{ marginBottom: 14 }}>
-                        <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12, color: c, fontWeight: 700, marginBottom: 5 }}>
-                          <span>{label}</span>
-                          <span>{count} de {total} ({Math.round(pct)}%)</span>
-                        </div>
-                        <div style={{ height: 10, background: "rgba(255,255,255,.06)", borderRadius: 99, overflow: "hidden" }}>
-                          <div style={{ height: "100%", width: `${pct}%`, background: c, borderRadius: 99, transition: "width 1s ease" }} />
-                        </div>
+                    { label: "✓ Correctas", count: correctCount, color: "#27ae60" },
+                    { label: "✗ Incorrectas", count: incorrectCount, color: "#e74c3c" },
+                    { label: "— No respondió", count: noAnswer, color: "rgba(255,255,255,.3)" },
+                  ].map(({ label, count: c, color }) => (
+                    <div key={label} style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 8 }}>
+                      <div style={{ fontSize: 12, color, fontWeight: 700, minWidth: 120 }}>{label}</div>
+                      <div style={{ flex: 1, height: 8, background: "rgba(255,255,255,.06)", borderRadius: 99, overflow: "hidden" }}>
+                        <div style={{ height: "100%", width: `${total > 0 ? (c / total) * 100 : 0}%`, background: color, borderRadius: 99, transition: "width 1s ease" }} />
                       </div>
-                    );
-                  })}
+                      <div style={{ fontSize: 12, color, fontWeight: 700, minWidth: 30, textAlign: "right" }}>{c}</div>
+                    </div>
+                  ))}
                 </div>
               </div>
-              <div style={{ textAlign: "center" }}>
+
+              <div style={{ textAlign: "center", marginTop: 24 }}>
                 {session.currentQ + 1 < session.questions.length
-                  ? <Btn variant="primary" style={{ padding: "16px 44px", fontSize: 17 }} onClick={nextQuestion}>Siguiente pregunta →</Btn>
-                  : <Btn variant="primary" style={{ padding: "16px 44px", fontSize: 17, background: "linear-gradient(135deg,#1a7340,#27ae60)", boxShadow: "0 8px 24px rgba(26,115,64,.4)" }} onClick={endQuiz}>Finalizar quiz ✓</Btn>}
+                  ? <Btn variant="primary" style={{ padding: "14px 40px", fontSize: 16 }} onClick={nextQuestion}>Siguiente pregunta →</Btn>
+                  : <Btn variant="primary" style={{ padding: "14px 40px", fontSize: 16, background: "linear-gradient(135deg,#1a7340,#27ae60)", boxShadow: "0 8px 24px rgba(26,115,64,.4)" }} onClick={endQuiz}>Finalizar quiz ✓</Btn>}
               </div>
             </div>
           );
