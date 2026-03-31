@@ -256,7 +256,9 @@ export default function App() {
   const [liveSession, setLiveSession] = useState(null);
   const [farmerAnswers, setFarmerAnswers] = useState(() => { try { return JSON.parse(localStorage.getItem("bda_answers")) || []; } catch { return []; } });
   const [currentAnswer, setCurrentAnswer] = useState(null);
-  const [answered, setAnswered] = useState(false);
+  const [answeredQIdx, setAnsweredQIdx] = useState(-1); // tracks which question was answered
+  // derived: farmer has answered the CURRENT question
+  const answered = answeredQIdx === (liveSession?.currentQ ?? -99);
   const [participants, setParticipants] = useState(0);
   const [newQuiz, setNewQuiz] = useState({ title: "", questions: [] });
   const [editingQ, setEditingQ] = useState(null);
@@ -420,12 +422,14 @@ export default function App() {
     const updates = { currentQ: next, phase: "question", timer: q.time };
     setSession(s => ({ ...s, ...updates }));
     await updateDoc(doc(db, "sessions", session.id), updates);
-    setAnswered(false); setCurrentAnswer(null);
+    setCurrentAnswer(null);
     setRevealDistribution({});
   }
 
   async function endQuestion() {
     clearTimeout(timerRef.current);
+    // Delay to ensure all farmer answers have been written to Firestore
+    await new Promise(r => setTimeout(r, 800));
     // Calculate real distribution from Firestore answers
     if (session?.id && activeQ) {
       const snap = await getDoc(doc(db, "sessions", session.id));
@@ -439,7 +443,6 @@ export default function App() {
           const ans = arr.find(a => a.qIdx === currentQ);
           if (ans !== undefined) { dist[ans.answer] = (dist[ans.answer] || 0) + 1; total++; }
         });
-        // Convert to percentages
         const pctDist = {};
         activeQ.options.forEach((_, i) => { pctDist[i] = total > 0 ? Math.round((dist[i] / total) * 100) : 0; });
         setRevealDistribution(pctDist);
@@ -509,8 +512,9 @@ export default function App() {
 
   async function submitAnswer(origIdx) {
     if (answered) return;
-    setCurrentAnswer(origIdx); setAnswered(true);
     const qIdx = liveSession?.currentQ ?? 0;
+    setCurrentAnswer(origIdx);
+    setAnsweredQIdx(qIdx);
     setFarmerAnswers(a => [...a, { qIdx, answer: origIdx }]);
     // Save answer to Firestore
     if (liveSession?.id) {
@@ -518,10 +522,11 @@ export default function App() {
         const sessionRef = doc(db, "sessions", liveSession.id);
         const snap = await getDoc(sessionRef);
         if (snap.exists()) {
+          const key = email.replace(/\./g, "_").replace(/@/g, "_at_");
           const answers = snap.data().answers || {};
-          const farmerAnswersList = answers[email] || [];
+          const farmerAnswersList = answers[key] || [];
           farmerAnswersList.push({ qIdx, answer: origIdx });
-          await updateDoc(sessionRef, { [`answers.${email.replace(/\./g, "_").replace(/@/g, "_at_")}`]: farmerAnswersList });
+          await updateDoc(sessionRef, { [`answers.${key}`]: farmerAnswersList });
         }
       } catch(e) { console.error("Error saving answer:", e); }
     }
@@ -590,7 +595,6 @@ export default function App() {
             <Input type="password" placeholder="Código admin" value={adminPwd} onChange={e => setAdminPwd(e.target.value)} onKeyDown={e => e.key === "Enter" && adminLogin()} style={{ marginBottom: 12 }} />
             {adminErr && <div style={{ fontSize: 12, color: "#e74c3c", marginBottom: 10 }}>{adminErr}</div>}
             <Btn variant="ghost" style={{ width: "100%" }} onClick={adminLogin}>Entrar como Admin</Btn>
-            <div style={{ fontSize: 11, color: "rgba(255,255,255,.2)", marginTop: 8, textAlign: "center" }}>Código demo: <b style={{ color: "rgba(255,255,255,.4)" }}>ADMIN9</b></div>
           </div>}
         </Card>
       </div>
@@ -725,9 +729,18 @@ export default function App() {
             <div className="ra-display" style={{ fontSize: 18, fontWeight: 800, lineHeight: 1.45 }}>{liveQ.text}</div>
           </div>
           <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-            {liveQ._opts?.map((opt, i) => { const sel = currentAnswer === opt.orig; return <button key={i} className={`opt-btn${sel ? " selected" : ""}`} onClick={() => !answered && submitAnswer(opt.orig)} style={{ display: "flex", alignItems: "center", gap: 14, padding: "15px 18px", background: sel ? `${OCOLS[opt.orig]}20` : "rgba(255,255,255,.04)", border: `2px solid ${sel ? OCOLS[opt.orig] : "rgba(255,255,255,.08)"}`, borderRadius: 14, fontSize: 15, fontWeight: 600, color: sel ? "#fff" : "rgba(255,255,255,.7)", cursor: answered ? "default" : "pointer", textAlign: "left", width: "100%", fontFamily: "inherit", opacity: answered && !sel ? .4 : 1 }}><span style={{ minWidth: 32, height: 32, background: sel ? OCOLS[opt.orig] : "rgba(255,255,255,.1)", borderRadius: 10, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 13, fontWeight: 800, color: "#fff", flexShrink: 0 }}>{String.fromCharCode(65 + i)}</span>{opt.text}</button>; })}
+            {liveQ._opts?.map((opt, i) => {
+              return (
+                <button key={i} className="opt-btn"
+                  onClick={() => !answered && submitAnswer(opt.orig)}
+                  style={{ display: "flex", alignItems: "center", gap: 14, padding: "15px 18px", background: "rgba(255,255,255,.04)", border: "2px solid rgba(255,255,255,.08)", borderRadius: 14, fontSize: 15, fontWeight: 600, color: "rgba(255,255,255,.7)", cursor: answered ? "default" : "pointer", textAlign: "left", width: "100%", fontFamily: "inherit", opacity: answered ? 0.5 : 1 }}>
+                  <span style={{ minWidth: 32, height: 32, background: "rgba(255,255,255,.1)", borderRadius: 10, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 13, fontWeight: 800, color: "#fff", flexShrink: 0 }}>{String.fromCharCode(65 + i)}</span>
+                  {opt.text}
+                </button>
+              );
+            })}
           </div>
-          {answered && <div style={{ textAlign: "center", color: "rgba(255,255,255,.3)", fontSize: 13, marginTop: 16 }}>✓ Registrado — esperando al resto...</div>}
+          {answered && <div style={{ textAlign: "center", color: "#27ae60", fontSize: 14, fontWeight: 700, marginTop: 16 }}>✓ Respuesta registrada — esperando al resto...</div>}
         </div>
       </div>
     );
