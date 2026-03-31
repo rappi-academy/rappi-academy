@@ -265,6 +265,7 @@ export default function App() {
   const [revealDistribution, setRevealDistribution] = useState({});
   const timerRef = useRef(null);
   const sessionUnsubRef = useRef(null);
+  const endQuestionRef = useRef(null);
 
   // ── Persist farmer state to localStorage ─────────────────────────────────
   useEffect(() => { if (email) localStorage.setItem("bda_email", email); }, [email]);
@@ -315,6 +316,8 @@ export default function App() {
   }, [quizCode, view]);
 
   // ── Admin: listen to own session for real participant count + auto-end ────
+  const autoEndFiredRef = useRef(false);
+  useEffect(() => { autoEndFiredRef.current = false; }, [session?.currentQ]);
   useEffect(() => {
     if (!session?.id || view !== "adminLive") return;
     const unsub = onSnapshot(doc(db, "sessions", session.id), snap => {
@@ -322,15 +325,15 @@ export default function App() {
         const data = snap.data();
         const registered = data.registeredFarmers || [];
         setParticipants(registered.length);
-        // Auto-end question when all registered farmers have answered
-        if (data.phase === "question" && registered.length > 0) {
+        // Auto-end when all farmers answered — call endQuestion via ref
+        if (data.phase === "question" && registered.length > 0 && !autoEndFiredRef.current) {
           const answers = data.answers || {};
           const currentQ = data.currentQ;
           const answeredCount = Object.values(answers).filter(arr => arr.some(a => a.qIdx === currentQ)).length;
           if (answeredCount >= registered.length) {
+            autoEndFiredRef.current = true;
             clearTimeout(timerRef.current);
-            updateDoc(doc(db, "sessions", session.id), { phase: "reveal", timer: 0 });
-            setSession(s => ({ ...s, phase: "reveal", timer: 0 }));
+            endQuestionRef.current?.();
           }
         }
       }
@@ -431,38 +434,42 @@ export default function App() {
     setRevealDistribution({});
   }
 
+  // Keep endQuestionRef in sync so the auto-end listener can call it
+  useEffect(() => { endQuestionRef.current = endQuestion; });
+
   async function endQuestion() {
     clearTimeout(timerRef.current);
-    // Increase delay to ensure all farmer answers have been written to Firestore
+    // Delay to ensure all farmer answers have been written to Firestore
     await new Promise(r => setTimeout(r, 1200));
-    // Calculate real distribution from Firestore answers
-    let pctDist = {};
+    // Read session state fresh from Firestore (avoids stale closure)
+    const sessionId = session?.id;
+    if (!sessionId) return;
+    const snap = await getDoc(doc(db, "sessions", sessionId));
+    if (!snap.exists()) return;
+    const data = snap.data();
+    const rawAnswers = data.answers || {};
+    const registered = data.registeredFarmers || [];
+    const currentQ = data.currentQ;
+    const questions = data.questions || [];
+    const activeQuestion = questions[currentQ];
+    if (!activeQuestion) return;
+    // Calculate distribution
+    const dist = {};
+    activeQuestion.options.forEach((_, i) => { dist[i] = 0; });
     let totalAnswered = 0;
-    if (session?.id && activeQ) {
-      const snap = await getDoc(doc(db, "sessions", session.id));
-      if (snap.exists()) {
-        const data = snap.data();
-        const rawAnswers = data.answers || {};
-        const registered = data.registeredFarmers || [];
-        const currentQ = session.currentQ;
-        const dist = {};
-        activeQ.options.forEach((_, i) => { dist[i] = 0; });
-        Object.values(rawAnswers).forEach(arr => {
-          const ans = arr.find(a => a.qIdx === currentQ);
-          if (ans !== undefined) { dist[ans.answer] = (dist[ans.answer] || 0) + 1; totalAnswered++; }
-        });
-        // Store raw counts (not pct) so reveal can show real numbers
-        activeQ.options.forEach((_, i) => { pctDist[i] = dist[i]; });
-        // Store total registered for "no answer" calculation
-        pctDist._total = registered.length;
-        pctDist._answered = totalAnswered;
-        setRevealDistribution(pctDist);
-        setParticipants(registered.length);
-      }
-    }
+    Object.values(rawAnswers).forEach(arr => {
+      const ans = arr.find(a => a.qIdx === currentQ);
+      if (ans !== undefined) { dist[ans.answer] = (dist[ans.answer] || 0) + 1; totalAnswered++; }
+    });
+    const pctDist = {};
+    activeQuestion.options.forEach((_, i) => { pctDist[i] = dist[i]; });
+    pctDist._total = registered.length;
+    pctDist._answered = totalAnswered;
+    setRevealDistribution(pctDist);
+    setParticipants(registered.length);
     const updates = { phase: "reveal", timer: 0 };
     setSession(s => ({ ...s, ...updates }));
-    if (session?.id) await updateDoc(doc(db, "sessions", session.id), updates);
+    await updateDoc(doc(db, "sessions", sessionId), updates);
   }
 
   async function endQuiz() {
