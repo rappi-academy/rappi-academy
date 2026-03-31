@@ -289,13 +289,25 @@ export default function App() {
     return () => unsub();
   }, [quizCode, view]);
 
-  // ── Admin: listen to own session for real participant count ──────────────
+  // ── Admin: listen to own session for real participant count + auto-end ────
   useEffect(() => {
     if (!session?.id || view !== "adminLive") return;
     const unsub = onSnapshot(doc(db, "sessions", session.id), snap => {
       if (snap.exists()) {
         const data = snap.data();
-        setParticipants((data.registeredFarmers || []).length);
+        const registered = data.registeredFarmers || [];
+        setParticipants(registered.length);
+        // Auto-end question when all registered farmers have answered
+        if (data.phase === "question" && registered.length > 0) {
+          const answers = data.answers || {};
+          const currentQ = data.currentQ;
+          const answeredCount = Object.values(answers).filter(arr => arr.some(a => a.qIdx === currentQ)).length;
+          if (answeredCount >= registered.length) {
+            clearTimeout(timerRef.current);
+            updateDoc(doc(db, "sessions", session.id), { phase: "reveal", timer: 0 });
+            setSession(s => ({ ...s, phase: "reveal", timer: 0 }));
+          }
+        }
       }
     });
     return () => unsub();
@@ -869,17 +881,29 @@ export default function App() {
               const av = act.length ? Math.round(act.reduce((acc, r) => acc + pct(r.correct, r.totalQ), 0) / act.length) : s.avgScore;
               return (
                 <div key={s.id} className="glass" style={{ borderRadius: 18, padding: "20px 24px", marginBottom: 14 }}>
-                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 16 }}>
                     <div>
-                      <div className="ra-display" style={{ fontWeight: 800, fontSize: 15, marginBottom: 4 }}>{s.date}</div>
+                      {/* Quiz title prominent */}
+                      <div className="ra-display" style={{ fontWeight: 900, fontSize: 17, marginBottom: 2, color: "#fff" }}>{qz.title}</div>
+                      <div className="ra-display" style={{ fontWeight: 700, fontSize: 13, marginBottom: 6, color: "rgba(255,255,255,.5)" }}>{s.date}</div>
                       <div style={{ fontSize: 13, color: "rgba(255,255,255,.35)", display: "flex", gap: 16 }}>
-                        <span>👥 {s.participants || (s.farmerResults || []).length}</span>
+                        <span>👥 {s.participants || (s.farmerResults || []).length} participantes</span>
                         <span>🔵 {(s.excusados || []).length} excusados</span>
                       </div>
                     </div>
-                    <div style={{ display: "flex", gap: 12, alignItems: "center" }}>
-                      <div style={{ width: 56, height: 56, borderRadius: "50%", border: `2px solid ${av >= 80 ? "#27ae60" : av >= 60 ? "#f39c12" : "#e74c3c"}`, background: `${av >= 80 ? "#27ae60" : av >= 60 ? "#f39c12" : "#e74c3c"}18`, display: "flex", alignItems: "center", justifyContent: "center", fontWeight: 900, fontSize: 15, color: av >= 80 ? "#27ae60" : av >= 60 ? "#f39c12" : "#e74c3c" }}>{av}%</div>
+                    <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
+                      <div style={{ textAlign: "center" }}>
+                        <div style={{ width: 56, height: 56, borderRadius: "50%", border: `2px solid ${av >= 80 ? "#27ae60" : av >= 60 ? "#f39c12" : "#e74c3c"}`, background: `${av >= 80 ? "#27ae60" : av >= 60 ? "#f39c12" : "#e74c3c"}18`, display: "flex", alignItems: "center", justifyContent: "center", fontWeight: 900, fontSize: 15, color: av >= 80 ? "#27ae60" : av >= 60 ? "#f39c12" : "#e74c3c" }}>{av}%</div>
+                        <div style={{ fontSize: 10, color: "rgba(255,255,255,.3)", marginTop: 3 }}>asertividad</div>
+                      </div>
                       <Btn variant="green" onClick={() => openCSV(buildCSV(s, qz.title), qz.title)}>↓ CSV</Btn>
+                      <button onClick={async () => {
+                        if (window.confirm("¿Eliminar esta sesión del historial?")) {
+                          const quizRef = doc(db, "quizzes", qz.id);
+                          const updated = (qz.sessions || []).filter(x => x.id !== s.id);
+                          await updateDoc(quizRef, { sessions: updated });
+                        }
+                      }} style={{ padding: "9px 12px", background: "rgba(231,76,60,.12)", border: "1px solid rgba(231,76,60,.3)", borderRadius: 10, color: "#e74c3c", fontWeight: 700, cursor: "pointer", fontFamily: "inherit", fontSize: 13 }}>🗑️</button>
                     </div>
                   </div>
                   {(s.farmerResults || []).length > 0 && <ResultsTable session={s} />}
@@ -971,7 +995,8 @@ export default function App() {
         {session.phase === "reveal" && activeQ && (
           <div style={{ padding: 40, maxWidth: 800, margin: "0 auto", textAlign: "center" }}>
             <div style={{ fontSize: 14, color: "rgba(255,255,255,.4)", marginBottom: 10 }}>Respuesta correcta:</div>
-            <div className="ra-display" style={{ fontSize: 32, fontWeight: 900, color: "#27ae60", marginBottom: 32, textShadow: "0 0 30px rgba(39,174,96,.4)" }}>{Array.isArray(activeQ.correct) ? activeQ.correct.map(i => activeQ.options[i]).join(", ") : activeQ.options[activeQ.correct]}</div>
+            <div className="ra-display" style={{ fontSize: 32, fontWeight: 900, color: "#27ae60", marginBottom: 8, textShadow: "0 0 30px rgba(39,174,96,.4)" }}>{Array.isArray(activeQ.correct) ? activeQ.correct.map(i => activeQ.options[i]).join(", ") : activeQ.options[activeQ.correct]}</div>
+            <div style={{ fontSize: 12, color: "rgba(255,255,255,.3)", marginBottom: 28 }}>Distribución de respuestas (% de farmers por opción)</div>
             <div style={{ display: "flex", gap: 20, justifyContent: "center", marginBottom: 36, flexWrap: "wrap" }}>
               {activeQ.options.map((opt, i) => {
                 const isCorr = Array.isArray(activeQ.correct) ? activeQ.correct.includes(i) : activeQ.correct === i;
@@ -982,7 +1007,8 @@ export default function App() {
                       <div style={{ width: "100%", height: `${p}%`, background: isCorr ? "linear-gradient(0deg, #27ae60, #2ecc71)" : `linear-gradient(0deg, ${OCOLS[i]}40, ${OCOLS[i]}20)`, transition: "height .8s ease" }} />
                     </div>
                     <div style={{ color: "rgba(255,255,255,.3)", fontSize: 11, marginTop: 6 }}>{String.fromCharCode(65 + i)}</div>
-                    <div style={{ color: isCorr ? "#27ae60" : "rgba(255,255,255,.3)", fontSize: 14, fontWeight: 800 }}>{p}%</div>
+                    <div style={{ color: isCorr ? "#27ae60" : "rgba(255,255,255,.3)", fontSize: 13, fontWeight: 800 }}>{p}%</div>
+                    {isCorr && <div style={{ fontSize: 10, color: "#27ae60", marginTop: 2 }}>✓ correcta</div>}
                   </div>
                 );
               })}
