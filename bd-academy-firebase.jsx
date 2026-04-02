@@ -440,7 +440,7 @@ export default function App() {
   async function endQuestion() {
     clearTimeout(timerRef.current);
     // Delay to ensure all farmer answers have been written to Firestore
-    await new Promise(r => setTimeout(r, 1200));
+    await new Promise(r => setTimeout(r, 2500));
     // Read session state fresh from Firestore (avoids stale closure)
     const sessionId = session?.id;
     if (!sessionId) return;
@@ -453,14 +453,17 @@ export default function App() {
     const questions = data.questions || [];
     const activeQuestion = questions[currentQ];
     if (!activeQuestion) return;
+    console.log("🔍 endQuestion - currentQ:", currentQ, "registered:", registered, "rawAnswers keys:", Object.keys(rawAnswers), "rawAnswers:", JSON.stringify(rawAnswers));
     // Calculate distribution
     const dist = {};
     activeQuestion.options.forEach((_, i) => { dist[i] = 0; });
     let totalAnswered = 0;
     Object.values(rawAnswers).forEach(arr => {
+      if (!Array.isArray(arr)) return;
       const ans = arr.find(a => a.qIdx === currentQ);
       if (ans !== undefined) { dist[ans.answer] = (dist[ans.answer] || 0) + 1; totalAnswered++; }
     });
+    console.log("📊 dist:", dist, "totalAnswered:", totalAnswered, "registered:", registered.length);
     const pctDist = {};
     activeQuestion.options.forEach((_, i) => { pctDist[i] = dist[i]; });
     pctDist._total = registered.length;
@@ -1176,21 +1179,48 @@ export default function App() {
           );
         })()}
 
-        {session.phase === "finished" && (
-          <div style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", minHeight: "80vh", textAlign: "center", padding: 48 }}>
-            <div style={{ fontSize: 80, marginBottom: 20 }}>🏆</div>
-            <div className="ra-display" style={{ fontSize: 40, fontWeight: 900, marginBottom: 32, background: "linear-gradient(90deg,#FF441F,#ff6b3d)", WebkitBackgroundClip: "text", WebkitTextFillColor: "transparent" }}>¡Quiz finalizado!</div>
-            <div style={{ display: "flex", gap: 48, marginBottom: 40 }}>
-              {[["participantes", participants, "#FF441F"], ["preguntas", session.questions.length, "#4A90D9"], ["guardado ✓", "Firebase", "#27ae60"]].map(([l, v, c]) => (
-                <div key={l} style={{ textAlign: "center" }}><div className="ra-display" style={{ fontSize: 40, fontWeight: 900, color: c }}>{v}</div><div style={{ color: "rgba(255,255,255,.3)", fontSize: 13, marginTop: 4 }}>{l}</div></div>
-              ))}
+        {session.phase === "finished" && (() => {
+          const results = session.farmerResults || [];
+          const excEmails = (session.excusados || []).map(e => e.farmerEmail);
+          const active = results.filter(r => !excEmails.includes(r.email));
+          const avgAsert = active.length ? Math.round(active.reduce((s, r) => s + pct(r.correct, r.totalQ), 0) / active.length) : 0;
+          const asertColor = avgAsert >= 80 ? "#27ae60" : avgAsert >= 60 ? "#f39c12" : "#e74c3c";
+          return (
+            <div style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", minHeight: "80vh", textAlign: "center", padding: 48 }}>
+              <div style={{ fontSize: 80, marginBottom: 20 }}>🏆</div>
+              <div className="ra-display" style={{ fontSize: 40, fontWeight: 900, marginBottom: 32, background: "linear-gradient(90deg,#FF441F,#ff6b3d)", WebkitBackgroundClip: "text", WebkitTextFillColor: "transparent" }}>¡Quiz finalizado!</div>
+              <div style={{ display: "flex", gap: 40, marginBottom: 32, flexWrap: "wrap", justifyContent: "center" }}>
+                {[["participantes", participants, "#FF441F"], ["preguntas", session.questions.length, "#4A90D9"], ["guardado ✓", "Firebase", "#27ae60"]].map(([l, v, c]) => (
+                  <div key={l} style={{ textAlign: "center" }}>
+                    <div className="ra-display" style={{ fontSize: 40, fontWeight: 900, color: c }}>{v}</div>
+                    <div style={{ color: "rgba(255,255,255,.3)", fontSize: 13, marginTop: 4 }}>{l}</div>
+                  </div>
+                ))}
+              </div>
+              {/* Asertividad promedio */}
+              <div className="glass" style={{ borderRadius: 20, padding: "20px 48px", marginBottom: 32, display: "flex", alignItems: "center", gap: 20 }}>
+                <svg width="80" height="80" viewBox="0 0 80 80">
+                  <circle cx="40" cy="40" r="32" fill="none" stroke="rgba(255,255,255,.08)" strokeWidth="8" />
+                  <circle cx="40" cy="40" r="32" fill="none" stroke={asertColor} strokeWidth="8"
+                    strokeDasharray={`${2 * Math.PI * 32}`}
+                    strokeDashoffset={`${2 * Math.PI * 32 * (1 - avgAsert / 100)}`}
+                    strokeLinecap="round" transform="rotate(-90 40 40)" />
+                  <text x="40" y="36" textAnchor="middle" fill="#fff" fontSize="16" fontWeight="900" fontFamily="Nunito,sans-serif">{avgAsert}%</text>
+                  <text x="40" y="50" textAnchor="middle" fill="rgba(255,255,255,.4)" fontSize="8" fontFamily="DM Sans,sans-serif">asertividad</text>
+                </svg>
+                <div style={{ textAlign: "left" }}>
+                  <div className="ra-display" style={{ fontSize: 14, fontWeight: 800, color: "rgba(255,255,255,.7)", marginBottom: 4 }}>Promedio del grupo</div>
+                  <div style={{ fontSize: 12, color: "rgba(255,255,255,.35)" }}>{active.length} participantes activos</div>
+                  {excEmails.length > 0 && <div style={{ fontSize: 12, color: "rgba(255,255,255,.25)", marginTop: 2 }}>{excEmails.length} excusado(s) no incluidos</div>}
+                </div>
+              </div>
+              <div style={{ display: "flex", gap: 12 }}>
+                <Btn variant="primary" style={{ padding: "14px 36px" }} onClick={() => { setSession(null); setView("admin"); }}>Volver al panel</Btn>
+                <Btn variant="ghost" onClick={() => setView("adminHistory")}>Ver resultados</Btn>
+              </div>
             </div>
-            <div style={{ display: "flex", gap: 12 }}>
-              <Btn variant="primary" style={{ padding: "14px 36px" }} onClick={() => { setSession(null); setView("admin"); }}>Volver al panel</Btn>
-              <Btn variant="ghost" onClick={() => setView("adminHistory")}>Ver resultados</Btn>
-            </div>
-          </div>
-        )}
+          );
+        })()}
       </div>
     );
   }
