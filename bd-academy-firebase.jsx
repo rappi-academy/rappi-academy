@@ -554,15 +554,32 @@ export default function App() {
     }
   }
 
-  async function submitExcusa(targetQuizId) {
+  async function submitExcusa(target) {
     setExcusaErr("");
     if (!excusaFarmerEmail.endsWith("@rappi.com")) { setExcusaErr("Correo inválido (@rappi.com)"); return; }
     const reason = excusaReason === "Otra razón" ? excusaOther : excusaReason;
     if (!reason) { setExcusaErr("Ingresa la razón"); return; }
     const excusa = { farmerEmail: excusaFarmerEmail, supervisorEmail: superEmail, reason, timestamp: new Date().toLocaleString("es-CO") };
-    if (session?.id) await updateDoc(doc(db, "sessions", session.id), { excusados: [...(session.excusados || []), excusa] });
-    setExcusaFarmerEmail(""); setExcusaOther(""); setExcusaReason(EXCUSE_REASONS[0]);
-    setExcusaSuccess(true); setTimeout(() => setExcusaSuccess(false), 3000);
+    try {
+      if (target?.isLive && session?.id) {
+        // Save to active live session in Firestore
+        await updateDoc(doc(db, "sessions", session.id), { excusados: [...(session.excusados || []), excusa] });
+      } else if (target?.quizId && target?.id) {
+        // Save to historical session inside quizzes collection
+        const quizRef = doc(db, "quizzes", target.quizId);
+        const quizSnap = await getDoc(quizRef);
+        if (quizSnap.exists()) {
+          const sessions = quizSnap.data().sessions || [];
+          const updated = sessions.map(s => s.id === target.id
+            ? { ...s, excusados: [...(s.excusados || []), excusa] }
+            : s
+          );
+          await updateDoc(quizRef, { sessions: updated });
+        }
+      }
+      setExcusaFarmerEmail(""); setExcusaOther(""); setExcusaReason(EXCUSE_REASONS[0]);
+      setExcusaSuccess(true); setTimeout(() => setExcusaSuccess(false), 3000);
+    } catch(e) { console.error("Error registrando excusa:", e); setExcusaErr("Error al guardar, intenta de nuevo."); }
   }
 
   const activeQ = session && session.currentQ >= 0 ? session.questions[session.currentQ] : null;
@@ -824,7 +841,7 @@ export default function App() {
                       {excusaReason === "Otra razón" && <div style={{ marginBottom: 20 }}><Label>Especifica</Label><Input placeholder="Describe la razón..." value={excusaOther} onChange={e => setExcusaOther(e.target.value)} /></div>}
                       {excusaErr && <div style={{ fontSize: 12, color: "#e74c3c", marginBottom: 10, fontWeight: 600 }}>{excusaErr}</div>}
                       {excusaSuccess && <div style={{ fontSize: 13, color: "#27ae60", marginBottom: 10, fontWeight: 700 }}>✓ Excusa registrada</div>}
-                      <Btn variant="blue" style={{ width: "100%" }} onClick={() => submitExcusa(target.quizId)}>Registrar excusa</Btn>
+                      <Btn variant="blue" style={{ width: "100%" }} onClick={() => submitExcusa(target)}>Registrar excusa</Btn>
                     </Card>
                     <div className="ra-display" style={{ fontSize: 13, fontWeight: 800, marginBottom: 10, color: "rgba(255,255,255,.5)" }}>Excusados en esta sesión ({(target.excusados || []).length})</div>
                     {(target.excusados || []).length === 0
