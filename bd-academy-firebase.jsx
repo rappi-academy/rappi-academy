@@ -245,7 +245,7 @@ export default function App() {
   const [superEmailErr, setSuperEmailErr] = useState("");
   const [superCodeErr, setSuperCodeErr] = useState("");
   const [showSuper, setShowSuper] = useState(false);
-  const [superSession, setSuperSession] = useState(null);
+  const [superSession, setSuperSession] = useState(null); // stores session ID string
   const [excusaFarmerEmail, setExcusaFarmerEmail] = useState("");
   const [excusaReason, setExcusaReason] = useState(EXCUSE_REASONS[0]);
   const [excusaOther, setExcusaOther] = useState("");
@@ -791,12 +791,15 @@ export default function App() {
 
   // ── SUPERVISOR ────────────────────────────────────────────────────────────
   if (view === "supervisor") {
+    // Build allSessions fresh from Firestore-backed quizzes (live via onSnapshot)
     const allSessions = [];
     quizzes.forEach(quiz => (quiz.sessions || []).forEach(s => allSessions.push({ ...s, quizTitle: quiz.title, quizId: quiz.id })));
     if (session && session.phase !== "finished") {
       allSessions.unshift({ id: "live", date: "🔴 EN VIVO", quizTitle: session.quizTitle, quizId: session.quizId, isLive: true, farmerResults: session.farmerResults || [], excusados: session.excusados || [] });
     }
-    const target = superSession || (allSessions.length ? allSessions[0] : null);
+    // Find target by ID so it always reflects latest Firestore data
+    const targetId = superSession;
+    const target = allSessions.find(s => s.id === targetId) || (allSessions.length ? allSessions[0] : null);
     const excEmails = (target?.excusados || []).map(e => e.farmerEmail);
     const active = (target?.farmerResults || []).filter(r => !excEmails.includes(r.email));
     const avg = active.length ? Math.round(active.reduce((s, r) => s + pct(r.correct, r.totalQ), 0) / active.length) : 0;
@@ -827,7 +830,7 @@ export default function App() {
             <>
               <Card className="glass" style={{ padding: "16px 20px", marginBottom: 24 }}>
                 <Label>Selecciona la sesión</Label>
-                <Select value={target?.id || ""} onChange={e => { const found = allSessions.find(s => s.id === e.target.value); setSuperSession(found || null); }}>
+                <Select value={target?.id || ""} onChange={e => setSuperSession(e.target.value)}>
                   {allSessions.map(s => <option key={s.id} value={s.id}>{s.isLive ? "🔴 EN VIVO — " : ""}{s.quizTitle} · {s.date}</option>)}
                 </Select>
               </Card>
@@ -849,8 +852,11 @@ export default function App() {
                       : (target.excusados || []).map((e, i) => (
                         <div key={i} className="glass" style={{ borderRadius: 12, padding: "12px 16px", marginBottom: 8, borderLeft: "3px solid #4A90D9" }}>
                           <div style={{ fontWeight: 700, fontSize: 13 }}>{e.farmerEmail}</div>
-                          <div style={{ fontSize: 12, color: "rgba(255,255,255,.4)", marginTop: 2 }}>{e.reason}</div>
-                          <div style={{ fontSize: 11, color: "rgba(255,255,255,.2)", marginTop: 2 }}>Por {e.supervisorEmail} · {e.timestamp}</div>
+                          <div style={{ fontSize: 12, color: "rgba(255,255,255,.5)", marginTop: 3 }}>{e.reason}</div>
+                          <div style={{ fontSize: 11, color: "rgba(255,255,255,.25)", marginTop: 3, display: "flex", gap: 8 }}>
+                            <span>👤 {e.supervisorEmail}</span>
+                            <span>· {e.timestamp}</span>
+                          </div>
                         </div>
                       ))
                     }
