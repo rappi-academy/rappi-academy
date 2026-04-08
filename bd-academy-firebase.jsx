@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from "react";
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-app.js";
-import { getFirestore, collection, doc, setDoc, getDoc, getDocs, onSnapshot, updateDoc, deleteDoc, addDoc, serverTimestamp } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js";
+import { getFirestore, collection, doc, setDoc, getDoc, getDocs, onSnapshot, updateDoc, deleteDoc, addDoc, serverTimestamp, increment, writeBatch } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js";
 
 // ── FIREBASE CONFIG ──────────────────────────────────────────────────────────
 const firebaseConfig = {
@@ -296,23 +296,35 @@ export default function App() {
   // ── Listen to live session (farmer side) ──────────────────────────────────
   useEffect(() => {
     if (!quizCode || view !== "waiting") return;
-    const unsub = onSnapshot(collection(db, "sessions"), snap => {
-      const found = snap.docs.find(d => d.data().sessionCode === quizCode);
-      if (found) {
-        const data = { id: found.id, ...found.data() };
-        // If this is a new session (different from current), clear old answers
-        if (!liveSession || liveSession.id !== found.id) {
-          setFarmerAnswers([]);
-          setAnsweredQIdx(-1);
-          localStorage.removeItem("bda_answers");
+    let retryCount = 0;
+    let unsub = null;
+    const subscribe = () => {
+      unsub = onSnapshot(
+        collection(db, "sessions"),
+        (snap) => {
+          retryCount = 0;
+          const found = snap.docs.find(d => d.data().sessionCode === quizCode);
+          if (found) {
+            const data = { id: found.id, ...found.data() };
+            if (!liveSession || liveSession.id !== found.id) {
+              setFarmerAnswers([]);
+              setAnsweredQIdx(-1);
+              localStorage.removeItem("bda_answers");
+            }
+            setLiveSession(data);
+            registerFarmerInSession(found.id);
+            if (data.phase === "question") setView("quiz");
+            if (data.phase === "finished") setView("quiz");
+          }
+        },
+        (error) => {
+          console.error("Waiting listener error:", error);
+          if (retryCount < 5) { retryCount++; setTimeout(subscribe, 2000 * retryCount); }
         }
-        setLiveSession(data);
-        registerFarmerInSession(found.id);
-        if (data.phase === "question") setView("quiz");
-        if (data.phase === "finished") setView("quiz");
-      }
-    });
-    return () => unsub();
+      );
+    };
+    subscribe();
+    return () => { if (unsub) unsub(); };
   }, [quizCode, view]);
 
   // ── Admin: listen to own session for real participant count + auto-end ────
@@ -323,14 +335,15 @@ export default function App() {
     const unsub = onSnapshot(doc(db, "sessions", session.id), snap => {
       if (snap.exists()) {
         const data = snap.data();
-        const registered = data.registeredFarmers || [];
-        setParticipants(registered.length);
-        // Auto-end when all farmers answered — call endQuestion via ref
-        if (data.phase === "question" && registered.length > 0 && !autoEndFiredRef.current) {
+        // Use atomic participantCount for display (accurate at scale)
+        const count = data.participantCount || (data.registeredFarmers || []).length;
+        setParticipants(count);
+        // Auto-end when all farmers answered — use participantCount as threshold
+        if (data.phase === "question" && count > 0 && !autoEndFiredRef.current) {
           const answers = data.answers || {};
           const currentQ = data.currentQ;
           const answeredCount = Object.values(answers).filter(arr => arr.some(a => a.qIdx === currentQ)).length;
-          if (answeredCount >= registered.length) {
+          if (answeredCount >= count) {
             autoEndFiredRef.current = true;
             clearTimeout(timerRef.current);
             endQuestionRef.current?.();
@@ -343,9 +356,30 @@ export default function App() {
   useEffect(() => {
     if (!liveSession?.id || view !== "quiz") return;
     if (sessionUnsubRef.current) sessionUnsubRef.current();
-    sessionUnsubRef.current = onSnapshot(doc(db, "sessions", liveSession.id), snap => {
-      if (snap.exists()) setLiveSession({ id: snap.id, ...snap.data() });
-    });
+    let retryCount = 0;
+    const subscribe = () => {
+      sessionUnsubRef.current = onSnapshot(
+        doc(db, "sessions", liveSession.id),
+        (snap) => {
+          if (snap.exists()) {
+            retryCount = 0; // reset on success
+            const data = { id: snap.id, ...snap.data() };
+            setLiveSession(data);
+            // Handle phase transitions explicitly
+            if (data.phase === "finished") setView("quiz");
+          }
+        },
+        (error) => {
+          console.error("Listener error:", error);
+          // Auto-reconnect up to 5 times
+          if (retryCount < 5) {
+            retryCount++;
+            setTimeout(subscribe, 2000 * retryCount);
+          }
+        }
+      );
+    };
+    subscribe();
     return () => { if (sessionUnsubRef.current) sessionUnsubRef.current(); };
   }, [liveSession?.id, view]);
 
@@ -377,7 +411,13 @@ export default function App() {
       const data = snap.data();
       const registered = data.registeredFarmers || [];
       if (!registered.includes(email)) {
-        await updateDoc(sessionRef, { registeredFarmers: [...registered, email] });
+        // Use batch: add to array AND increment counter atomically
+        const batch = writeBatch(db);
+        batch.update(sessionRef, {
+          registeredFarmers: [...registered, email],
+          participantCount: increment(1)
+        });
+        await batch.commit();
       }
     } catch(e) { console.error("Error registering farmer:", e); }
   }
@@ -414,7 +454,7 @@ export default function App() {
     setLoading(true);
     const code = genCode();
     const qs = quiz.questions.map(q => ({ ...q, _opts: shuffle(q.options.map((o, i) => ({ text: o, orig: i }))) }));
-    const sessionData = { quizId: quiz.id, quizTitle: quiz.title, sessionCode: code, questions: qs, currentQ: -1, phase: "waiting", timer: 0, registeredFarmers: [], answers: {}, excusados: [], createdAt: serverTimestamp() };
+    const sessionData = { quizId: quiz.id, quizTitle: quiz.title, sessionCode: code, questions: qs, currentQ: -1, phase: "waiting", timer: 0, registeredFarmers: [], participantCount: 0, answers: {}, excusados: [], createdAt: serverTimestamp() };
     const ref = await addDoc(collection(db, "sessions"), sessionData);
     setSession({ ...sessionData, id: ref.id });
     setParticipants(0); setFarmerAnswers([]);
@@ -449,11 +489,12 @@ export default function App() {
     const data = snap.data();
     const rawAnswers = data.answers || {};
     const registered = data.registeredFarmers || [];
+    // Use atomic participantCount for accuracy at scale
+    const totalParticipants = data.participantCount || registered.length;
     const currentQ = data.currentQ;
     const questions = data.questions || [];
     const activeQuestion = questions[currentQ];
     if (!activeQuestion) return;
-    console.log("🔍 endQuestion - currentQ:", currentQ, "registered:", registered, "rawAnswers keys:", Object.keys(rawAnswers), "rawAnswers:", JSON.stringify(rawAnswers));
     // Calculate distribution
     const dist = {};
     activeQuestion.options.forEach((_, i) => { dist[i] = 0; });
@@ -463,13 +504,12 @@ export default function App() {
       const ans = arr.find(a => a.qIdx === currentQ);
       if (ans !== undefined) { dist[ans.answer] = (dist[ans.answer] || 0) + 1; totalAnswered++; }
     });
-    console.log("📊 dist:", dist, "totalAnswered:", totalAnswered, "registered:", registered.length);
     const pctDist = {};
     activeQuestion.options.forEach((_, i) => { pctDist[i] = dist[i]; });
-    pctDist._total = registered.length;
+    pctDist._total = totalParticipants;
     pctDist._answered = totalAnswered;
     setRevealDistribution(pctDist);
-    setParticipants(registered.length);
+    setParticipants(totalParticipants);
     const updates = { phase: "reveal", timer: 0 };
     setSession(s => ({ ...s, ...updates }));
     await updateDoc(doc(db, "sessions", sessionId), updates);
@@ -477,7 +517,6 @@ export default function App() {
 
   async function endQuiz() {
     clearTimeout(timerRef.current);
-    // Get real session data from Firestore
     const sessionRef = doc(db, "sessions", session.id);
     const snap = await getDoc(sessionRef);
     const sessionData = snap.exists() ? snap.data() : {};
@@ -486,34 +525,33 @@ export default function App() {
     const totalQ = session.questions.length;
     const excusados = sessionData.excusados || [];
     const excusadoEmails = excusados.map(e => e.farmerEmail);
+    const totalParticipants = sessionData.participantCount || registeredFarmers.length;
 
-    // Build real results per farmer
+    // Build real results per farmer — deduplicate answers per question
     const farmerResults = registeredFarmers.map(farmerEmail => {
       const key = farmerEmail.replace(/\./g, "_").replace(/@/g, "_at_");
-      const farmerAnswersList = rawAnswers[key] || [];
+      const rawList = rawAnswers[key] || [];
+      // Keep only last answer per question index
+      const deduped = Object.values(rawList.reduce((acc, a) => { acc[a.qIdx] = a; return acc; }, {}));
       let correct = 0; let incorrect = 0;
-      farmerAnswersList.forEach(({ qIdx, answer }) => {
+      deduped.forEach(({ qIdx, answer }) => {
         const q = session.questions[qIdx];
         if (!q) return;
         const isCorrect = Array.isArray(q.correct) ? q.correct.includes(answer) : q.correct === answer;
         if (isCorrect) correct++; else incorrect++;
       });
-      const answered = farmerAnswersList.length;
+      const answered = deduped.length;
       const noAnswer = totalQ - answered;
       return { email: farmerEmail, totalQ, answered, correct, incorrect, noAnswer };
     });
 
-    // Excusados que no están en registeredFarmers los agregamos como row separado
-    const excusadosNoRegistrados = excusados.filter(e => !registeredFarmers.includes(e.farmerEmail));
-
-    // Promedio solo de farmers activos (no excusados)
     const activeFarmers = farmerResults.filter(f => !excusadoEmails.includes(f.email));
     const avg = activeFarmers.length ? Math.round(activeFarmers.reduce((s, f) => s + pct(f.correct, f.totalQ), 0) / activeFarmers.length) : 0;
 
     const newSessionRecord = {
       id: genCode(),
       date: new Date().toISOString().slice(0, 10),
-      participants: registeredFarmers.length,
+      participants: totalParticipants,
       avgScore: avg,
       farmerResults,
       excusados,
