@@ -615,9 +615,6 @@ export default function App() {
     setAnsweredQIdx(qIdx);
     setFarmerAnswers(a => [...a, { qIdx, answer: origIdx }]);
   }
-      } catch(e) { console.error("Error saving answer:", e); }
-    }
-  }
 
   async function submitExcusa(target) {
     setExcusaErr("");
