@@ -356,28 +356,46 @@ export default function App() {
   useEffect(() => {
     if (!liveSession?.id || view !== "quiz") return;
     if (sessionUnsubRef.current) sessionUnsubRef.current();
+    // Restore answered state from Firestore on rejoin
+    const restoreAnswers = async () => {
+      try {
+        const snap = await getDoc(doc(db, "sessions", liveSession.id));
+        if (snap.exists()) {
+          const key = email.replace(/\./g, "_").replace(/@/g, "_at_");
+          const existingAnswers = snap.data().answers?.[key] || [];
+          if (existingAnswers.length > 0) {
+            setFarmerAnswers(existingAnswers);
+            // Mark current question as answered if already done
+            const currentQ = snap.data().currentQ ?? -1;
+            if (existingAnswers.some(a => a.qIdx === currentQ)) {
+              setAnsweredQIdx(currentQ);
+            }
+          }
+        }
+      } catch(e) { console.error("Error restoring answers:", e); }
+    };
+    restoreAnswers();
     let retryCount = 0;
     const subscribe = () => {
       sessionUnsubRef.current = onSnapshot(
         doc(db, "sessions", liveSession.id),
         (snap) => {
           if (snap.exists()) {
-            retryCount = 0; // reset on success
+            retryCount = 0;
             const data = { id: snap.id, ...snap.data() };
             setLiveSession(data);
-            // Handle phase transitions explicitly
             if (data.phase === "finished") setView("quiz");
           }
         },
         (error) => {
           console.error("Listener error:", error);
-          // Auto-reconnect up to 5 times
           if (retryCount < 5) {
             retryCount++;
             setTimeout(subscribe, 2000 * retryCount);
           }
         }
       );
+    };
     };
     subscribe();
     return () => { if (sessionUnsubRef.current) sessionUnsubRef.current(); };
@@ -573,21 +591,30 @@ export default function App() {
   async function submitAnswer(origIdx) {
     if (answered) return;
     const qIdx = liveSession?.currentQ ?? 0;
-    setCurrentAnswer(origIdx);
-    setAnsweredQIdx(qIdx);
-    setFarmerAnswers(a => [...a, { qIdx, answer: origIdx }]);
-    // Save answer to Firestore
+    // Check Firestore first — prevent double answer after page refresh
     if (liveSession?.id) {
       try {
         const sessionRef = doc(db, "sessions", liveSession.id);
         const snap = await getDoc(sessionRef);
         if (snap.exists()) {
           const key = email.replace(/\./g, "_").replace(/@/g, "_at_");
-          const answers = snap.data().answers || {};
-          const farmerAnswersList = answers[key] || [];
-          farmerAnswersList.push({ qIdx, answer: origIdx });
-          await updateDoc(sessionRef, { [`answers.${key}`]: farmerAnswersList });
+          const existingAnswers = snap.data().answers?.[key] || [];
+          // If already answered this question, mark as answered and block
+          const alreadyAnswered = existingAnswers.some(a => a.qIdx === qIdx);
+          if (alreadyAnswered) {
+            setAnsweredQIdx(qIdx); // mark UI as answered
+            return;
+          }
+          // Save new answer
+          const updated = [...existingAnswers, { qIdx, answer: origIdx }];
+          await updateDoc(sessionRef, { [`answers.${key}`]: updated });
         }
+      } catch(e) { console.error("Error saving answer:", e); }
+    }
+    setCurrentAnswer(origIdx);
+    setAnsweredQIdx(qIdx);
+    setFarmerAnswers(a => [...a, { qIdx, answer: origIdx }]);
+  }
       } catch(e) { console.error("Error saving answer:", e); }
     }
   }
