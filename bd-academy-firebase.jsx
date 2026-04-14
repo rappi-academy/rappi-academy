@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from "react";
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-app.js";
-import { getFirestore, collection, doc, setDoc, getDoc, getDocs, onSnapshot, updateDoc, deleteDoc, addDoc, serverTimestamp, increment, writeBatch } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js";
+import { getFirestore, collection, doc, setDoc, getDoc, getDocs, onSnapshot, updateDoc, deleteDoc, addDoc, serverTimestamp, increment, writeBatch, arrayUnion, query, where } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js";
 
 // ── FIREBASE CONFIG ──────────────────────────────────────────────────────────
 const firebaseConfig = {
@@ -299,12 +299,14 @@ export default function App() {
     let retryCount = 0;
     let unsub = null;
     const subscribe = () => {
+      // Query only the matching session — avoids reading entire collection
+      const q = query(collection(db, "sessions"), where("sessionCode", "==", quizCode));
       unsub = onSnapshot(
-        collection(db, "sessions"),
+        q,
         (snap) => {
           retryCount = 0;
-          const found = snap.docs.find(d => d.data().sessionCode === quizCode);
-          if (found) {
+          if (!snap.empty) {
+            const found = snap.docs[0];
             const data = { id: found.id, ...found.data() };
             if (!liveSession || liveSession.id !== found.id) {
               setFarmerAnswers([]);
@@ -356,25 +358,26 @@ export default function App() {
   useEffect(() => {
     if (!liveSession?.id || view !== "quiz") return;
     if (sessionUnsubRef.current) sessionUnsubRef.current();
-    // Restore answered state from Firestore on rejoin
-    const restoreAnswers = async () => {
-      try {
-        const snap = await getDoc(doc(db, "sessions", liveSession.id));
-        if (snap.exists()) {
-          const key = email.replace(/\./g, "_").replace(/@/g, "_at_");
-          const existingAnswers = snap.data().answers?.[key] || [];
-          if (existingAnswers.length > 0) {
-            setFarmerAnswers(existingAnswers);
-            // Mark current question as answered if already done
-            const currentQ = snap.data().currentQ ?? -1;
-            if (existingAnswers.some(a => a.qIdx === currentQ)) {
-              setAnsweredQIdx(currentQ);
+    // Only restore from Firestore if local answers are empty (page refresh scenario)
+    if (farmerAnswers.length === 0) {
+      const restoreAnswers = async () => {
+        try {
+          const snap = await getDoc(doc(db, "sessions", liveSession.id));
+          if (snap.exists()) {
+            const key = email.replace(/\./g, "_").replace(/@/g, "_at_");
+            const existingAnswers = snap.data().answers?.[key] || [];
+            if (existingAnswers.length > 0) {
+              setFarmerAnswers(existingAnswers);
+              const currentQ = snap.data().currentQ ?? -1;
+              if (existingAnswers.some(a => a.qIdx === currentQ)) {
+                setAnsweredQIdx(currentQ);
+              }
             }
           }
-        }
-      } catch(e) { console.error("Error restoring answers:", e); }
-    };
-    restoreAnswers();
+        } catch(e) { console.error("Error restoring answers:", e); }
+      };
+      restoreAnswers();
+    }
     let retryCount = 0;
     const subscribe = () => {
       sessionUnsubRef.current = onSnapshot(
@@ -395,7 +398,6 @@ export default function App() {
           }
         }
       );
-    };
     };
     subscribe();
     return () => { if (sessionUnsubRef.current) sessionUnsubRef.current(); };
@@ -420,23 +422,15 @@ export default function App() {
     if (ok) setView("avatar");
   }
 
-  // Register farmer in Firestore when they enter the lobby
+  // Register farmer - uses arrayUnion (no read needed, just write)
   async function registerFarmerInSession(sessionId) {
     try {
       const sessionRef = doc(db, "sessions", sessionId);
-      const snap = await getDoc(sessionRef);
-      if (!snap.exists()) return;
-      const data = snap.data();
-      const registered = data.registeredFarmers || [];
-      if (!registered.includes(email)) {
-        // Use batch: add to array AND increment counter atomically
-        const batch = writeBatch(db);
-        batch.update(sessionRef, {
-          registeredFarmers: [...registered, email],
-          participantCount: increment(1)
-        });
-        await batch.commit();
-      }
+      // arrayUnion automatically prevents duplicates — no read needed
+      await updateDoc(sessionRef, {
+        registeredFarmers: arrayUnion(email),
+        participantCount: increment(1)
+      });
     } catch(e) { console.error("Error registering farmer:", e); }
   }
 
@@ -591,29 +585,19 @@ export default function App() {
   async function submitAnswer(origIdx) {
     if (answered) return;
     const qIdx = liveSession?.currentQ ?? 0;
-    // Check Firestore first — prevent double answer after page refresh
-    if (liveSession?.id) {
-      try {
-        const sessionRef = doc(db, "sessions", liveSession.id);
-        const snap = await getDoc(sessionRef);
-        if (snap.exists()) {
-          const key = email.replace(/\./g, "_").replace(/@/g, "_at_");
-          const existingAnswers = snap.data().answers?.[key] || [];
-          // If already answered this question, mark as answered and block
-          const alreadyAnswered = existingAnswers.some(a => a.qIdx === qIdx);
-          if (alreadyAnswered) {
-            setAnsweredQIdx(qIdx); // mark UI as answered
-            return;
-          }
-          // Save new answer
-          const updated = [...existingAnswers, { qIdx, answer: origIdx }];
-          await updateDoc(sessionRef, { [`answers.${key}`]: updated });
-        }
-      } catch(e) { console.error("Error saving answer:", e); }
-    }
+    // Update UI immediately
     setCurrentAnswer(origIdx);
     setAnsweredQIdx(qIdx);
     setFarmerAnswers(a => [...a, { qIdx, answer: origIdx }]);
+    // Write directly to Firestore — no read needed
+    if (liveSession?.id) {
+      try {
+        const key = email.replace(/\./g, "_").replace(/@/g, "_at_");
+        await updateDoc(doc(db, "sessions", liveSession.id), {
+          [`answers.${key}`]: arrayUnion({ qIdx, answer: origIdx })
+        });
+      } catch(e) { console.error("Error saving answer:", e); }
+    }
   }
 
   async function submitExcusa(target) {
