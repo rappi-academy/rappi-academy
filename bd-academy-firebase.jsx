@@ -260,19 +260,18 @@ export default function App() {
   // derived: farmer has answered the CURRENT question
   const answered = answeredQIdx === (liveSession?.currentQ ?? -99);
   const [participants, setParticipants] = useState(0);
+  const [respondedCount, setRespondedCount] = useState(0);
   const [newQuiz, setNewQuiz] = useState({ title: "", questions: [] });
   const [editingQ, setEditingQ] = useState(null);
   const [revealDistribution, setRevealDistribution] = useState({});
-  const timerRef = useRef(null);
-  const sessionUnsubRef = useRef(null);
-  const endQuestionRef = useRef(null);
+  const registeredRef = useRef(false);
 
   // ── Persist farmer state to localStorage ─────────────────────────────────
   useEffect(() => { if (email) localStorage.setItem("bda_email", email); }, [email]);
   useEffect(() => { if (quizCode) localStorage.setItem("bda_code", quizCode); }, [quizCode]);
   useEffect(() => { localStorage.setItem("bda_avatar", JSON.stringify(avatar)); }, [avatar]);
   useEffect(() => { localStorage.setItem("bda_answers", JSON.stringify(farmerAnswers)); }, [farmerAnswers]);
-  useEffect(() => { if (["waiting","quiz"].includes(view)) localStorage.setItem("bda_view", view); if (view === "home") { localStorage.removeItem("bda_view"); localStorage.removeItem("bda_answers"); } }, [view]);
+  useEffect(() => { if (["waiting","quiz"].includes(view)) localStorage.setItem("bda_view", view); if (view === "home") { localStorage.removeItem("bda_view"); localStorage.removeItem("bda_answers"); registeredRef.current = false; } }, [view]);
 
   // ── Restore farmer session on page reload ─────────────────────────────────
   useEffect(() => {
@@ -280,7 +279,7 @@ export default function App() {
     const savedCode = localStorage.getItem("bda_code");
     const savedView = localStorage.getItem("bda_view");
     if (savedEmail && savedCode && (savedView === "waiting" || savedView === "quiz")) {
-      setView("waiting"); // will pick up live session via listener
+      setView("waiting"); // listener will pick up the session and navigate
     }
   }, []);
 
@@ -293,41 +292,46 @@ export default function App() {
     return () => unsub();
   }, []);
 
-  // ── Listen to live session (farmer side) ──────────────────────────────────
+  // ── Master farmer listener — runs in BOTH waiting and quiz views ──────────
+  // This single listener handles the full farmer lifecycle robustly
   useEffect(() => {
-    if (!quizCode || view !== "waiting") return;
-    let retryCount = 0;
+    if (!quizCode || !["waiting", "quiz"].includes(view)) return;
     let unsub = null;
+    let retryCount = 0;
+    const q = query(collection(db, "sessions"), where("sessionCode", "==", quizCode));
     const subscribe = () => {
-      // Query only the matching session — avoids reading entire collection
-      const q = query(collection(db, "sessions"), where("sessionCode", "==", quizCode));
-      unsub = onSnapshot(
-        q,
-        (snap) => {
+      unsub = onSnapshot(q,
+        async (snap) => {
           retryCount = 0;
-          if (!snap.empty) {
-            const found = snap.docs[0];
-            const data = { id: found.id, ...found.data() };
-            if (!liveSession || liveSession.id !== found.id) {
-              setFarmerAnswers([]);
-              setAnsweredQIdx(-1);
-              localStorage.removeItem("bda_answers");
-            }
-            setLiveSession(data);
-            registerFarmerInSession(found.id);
-            if (data.phase === "question") setView("quiz");
-            if (data.phase === "finished") setView("quiz");
+          if (snap.empty) return;
+          const found = snap.docs[0];
+          const data = { id: found.id, ...found.data() };
+          // Register only once per session
+          if (!registeredRef.current) {
+            registeredRef.current = true;
+            try {
+              await updateDoc(doc(db, "sessions", found.id), {
+                registeredFarmers: arrayUnion(email),
+                participantCount: increment(1)
+              });
+            } catch(e) { console.error("Register error:", e); }
           }
+          setLiveSession(data);
+          // Navigate based on phase
+          if (data.phase === "waiting" && view !== "waiting") setView("waiting");
+          if (data.phase === "question" && view !== "quiz") setView("quiz");
+          if (data.phase === "reveal" && view !== "quiz") setView("quiz");
+          if (data.phase === "finished" && view !== "quiz") setView("quiz");
         },
         (error) => {
-          console.error("Waiting listener error:", error);
-          if (retryCount < 5) { retryCount++; setTimeout(subscribe, 2000 * retryCount); }
+          console.error("Farmer listener error:", error);
+          if (retryCount < 8) { retryCount++; setTimeout(subscribe, 1500 * retryCount); }
         }
       );
     };
     subscribe();
     return () => { if (unsub) unsub(); };
-  }, [quizCode, view]);
+  }, [quizCode, view === "waiting" ? "waiting" : "quiz"]);
 
   // ── Admin: listen to own session for real participant count + auto-end ────
   const autoEndFiredRef = useRef(false);
@@ -340,6 +344,13 @@ export default function App() {
         // Use atomic participantCount for display (accurate at scale)
         const count = data.participantCount || (data.registeredFarmers || []).length;
         setParticipants(count);
+        // Track real responded count for the progress bar
+        if (data.phase === "question") {
+          const answers = data.answers || {};
+          const currentQ = data.currentQ;
+          const answeredCount = Object.values(answers).filter(arr => Array.isArray(arr) && arr.some(a => a.qIdx === currentQ)).length;
+          setRespondedCount(answeredCount);
+        }
         // Auto-end when all farmers answered — use participantCount as threshold
         if (data.phase === "question" && count > 0 && !autoEndFiredRef.current) {
           const answers = data.answers || {};
@@ -355,53 +366,6 @@ export default function App() {
     });
     return () => unsub();
   }, [session?.id, view]);
-  useEffect(() => {
-    if (!liveSession?.id || view !== "quiz") return;
-    if (sessionUnsubRef.current) sessionUnsubRef.current();
-    // Only restore from Firestore if local answers are empty (page refresh scenario)
-    if (farmerAnswers.length === 0) {
-      const restoreAnswers = async () => {
-        try {
-          const snap = await getDoc(doc(db, "sessions", liveSession.id));
-          if (snap.exists()) {
-            const key = email.replace(/\./g, "_").replace(/@/g, "_at_");
-            const existingAnswers = snap.data().answers?.[key] || [];
-            if (existingAnswers.length > 0) {
-              setFarmerAnswers(existingAnswers);
-              const currentQ = snap.data().currentQ ?? -1;
-              if (existingAnswers.some(a => a.qIdx === currentQ)) {
-                setAnsweredQIdx(currentQ);
-              }
-            }
-          }
-        } catch(e) { console.error("Error restoring answers:", e); }
-      };
-      restoreAnswers();
-    }
-    let retryCount = 0;
-    const subscribe = () => {
-      sessionUnsubRef.current = onSnapshot(
-        doc(db, "sessions", liveSession.id),
-        (snap) => {
-          if (snap.exists()) {
-            retryCount = 0;
-            const data = { id: snap.id, ...snap.data() };
-            setLiveSession(data);
-            if (data.phase === "finished") setView("quiz");
-          }
-        },
-        (error) => {
-          console.error("Listener error:", error);
-          if (retryCount < 5) {
-            retryCount++;
-            setTimeout(subscribe, 2000 * retryCount);
-          }
-        }
-      );
-    };
-    subscribe();
-    return () => { if (sessionUnsubRef.current) sessionUnsubRef.current(); };
-  }, [liveSession?.id, view]);
 
   // ── Admin timer ──────────────────────────────────────────────────────────
   useEffect(() => {
@@ -420,18 +384,6 @@ export default function App() {
     if (!email.endsWith("@rappi.com")) { setEmailErr("Usa tu correo @rappi.com"); ok = false; } else setEmailErr("");
     if (!quizCode || quizCode.length !== 6) { setCodeErr("Código de 6 dígitos requerido"); ok = false; } else setCodeErr("");
     if (ok) setView("avatar");
-  }
-
-  // Register farmer - uses arrayUnion (no read needed, just write)
-  async function registerFarmerInSession(sessionId) {
-    try {
-      const sessionRef = doc(db, "sessions", sessionId);
-      // arrayUnion automatically prevents duplicates — no read needed
-      await updateDoc(sessionRef, {
-        registeredFarmers: arrayUnion(email),
-        participantCount: increment(1)
-      });
-    } catch(e) { console.error("Error registering farmer:", e); }
   }
 
   function adminLogin() { if (adminPwd === ADMIN_CODE) { setView("admin"); setAdminErr(""); } else setAdminErr("Código incorrecto"); }
@@ -484,7 +436,16 @@ export default function App() {
     await updateDoc(doc(db, "sessions", session.id), updates);
     setCurrentAnswer(null);
     setRevealDistribution({});
+    setRespondedCount(0);
   }
+
+  // Restore answeredQIdx when liveSession phase changes (rejoin mid-quiz)
+  useEffect(() => {
+    if (!liveSession || liveSession.phase !== "question") return;
+    const currentQ = liveSession.currentQ ?? -1;
+    const alreadyAnswered = farmerAnswers.some(a => a.qIdx === currentQ);
+    if (alreadyAnswered) setAnsweredQIdx(currentQ);
+  }, [liveSession?.currentQ, liveSession?.phase]);
 
   // Keep endQuestionRef in sync so the auto-end listener can call it
   useEffect(() => { endQuestionRef.current = endQuestion; });
@@ -1093,7 +1054,7 @@ export default function App() {
   // ── ADMIN LIVE ────────────────────────────────────────────────────────────
   if (view === "adminLive") {
     if (!session) return null;
-    const responded = activeQ ? Math.floor(participants * Math.max(0, (1 - session.timer / activeQ.time)) * 0.85) : 0;
+    const responded = respondedCount;
     const OCOLS = ["#FF441F", "#4A90D9", "#27ae60", "#f39c12"];
     return (
       <div style={{ fontFamily: "'DM Sans', system-ui, sans-serif", minHeight: "100vh", background: "#060610", color: "#fff" }}>
