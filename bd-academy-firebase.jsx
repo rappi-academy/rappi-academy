@@ -265,6 +265,9 @@ export default function App() {
   const [editingQ, setEditingQ] = useState(null);
   const [revealDistribution, setRevealDistribution] = useState({});
   const registeredRef = useRef(false);
+  const timerRef = useRef(null);
+  const sessionUnsubRef = useRef(null);
+  const endQuestionRef = useRef(null);
 
   // ── Persist farmer state to localStorage ─────────────────────────────────
   useEffect(() => { if (email) localStorage.setItem("bda_email", email); }, [email]);
