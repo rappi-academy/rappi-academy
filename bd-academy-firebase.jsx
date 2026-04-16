@@ -258,7 +258,10 @@ export default function App() {
   const [currentAnswer, setCurrentAnswer] = useState(null);
   const [answeredQIdx, setAnsweredQIdx] = useState(-1); // tracks which question was answered
   // derived: farmer has answered the CURRENT question
-  const answered = answeredQIdx === (liveSession?.currentQ ?? -99);
+  const answeredQIdx_state = answeredQIdx;
+  // answered = true ONLY if farmer has an actual answer stored for current question
+  const answered = answeredQIdx_state === (liveSession?.currentQ ?? -99) &&
+    farmerAnswers.some(a => a.qIdx === (liveSession?.currentQ ?? -99));
   const [participants, setParticipants] = useState(0);
   const [respondedCount, setRespondedCount] = useState(0);
   const [newQuiz, setNewQuiz] = useState({ title: "", questions: [] });
@@ -320,9 +323,9 @@ export default function App() {
             } catch(e) { console.error("Register error:", e); }
           }
           setLiveSession(data);
-          // Navigate based on phase
+          // Navigate based on phase — paused stays in quiz view
           if (data.phase === "waiting" && view !== "waiting") setView("waiting");
-          if (data.phase === "question" && view !== "quiz") setView("quiz");
+          if ((data.phase === "question" || data.phase === "paused") && view !== "quiz") setView("quiz");
           if (data.phase === "reveal" && view !== "quiz") setView("quiz");
           if (data.phase === "finished" && view !== "quiz") setView("quiz");
         },
@@ -741,6 +744,7 @@ export default function App() {
       );
     }
     if (!liveQ) return <div className="ra-root"><StyleInject /><div style={{ display: "flex", alignItems: "center", justifyContent: "center", minHeight: "100vh" }}><div className="spinner" /></div></div>;
+    // Show reveal screen only during reveal phase
     if (qs.phase === "reveal") {
       const fa = farmerAnswers.find(a => a.qIdx === qs.currentQ);
       const ok = fa && (Array.isArray(liveQ.correct) ? liveQ.correct.includes(fa.answer) : fa.answer === liveQ.correct);
@@ -776,7 +780,9 @@ export default function App() {
           <div style={{ height: 6, background: "rgba(255,255,255,.08)", borderRadius: 99, overflow: "hidden", marginBottom: 4 }}>
             <div style={{ height: "100%", borderRadius: 99, background: `linear-gradient(90deg, ${liveTimerColor}, ${liveTimerColor}88)`, width: `${liveTimerPct}%`, transition: "width 1s linear, background .5s" }} />
           </div>
-          <div style={{ textAlign: "right", fontSize: 36, fontWeight: 900, color: liveTimerColor, marginBottom: 16, fontFamily: "'Nunito',sans-serif" }}>{qs.timer}s</div>
+          <div style={{ textAlign: "right", fontSize: 36, fontWeight: 900, color: liveTimerColor, marginBottom: 16, fontFamily: "'Nunito',sans-serif" }}>
+            {qs.phase === "paused" ? <span style={{ fontSize: 20, color: "rgba(255,255,255,.4)" }}>⏸ Pausado</span> : `${qs.timer}s`}
+          </div>
           <div className="glass" style={{ borderRadius: 20, padding: "22px 24px", marginBottom: 16, borderLeft: "3px solid rgba(255,68,31,.4)" }}>
             <div style={{ fontSize: 10, fontWeight: 700, color: "#FF441F", textTransform: "uppercase", letterSpacing: "1.2px", marginBottom: 10 }}>{liveQ.type === "truefalse" ? "Verdadero / Falso" : liveQ.type === "multi" ? "Selección múltiple" : "Opción única"}</div>
             <div className="ra-display" style={{ fontSize: 18, fontWeight: 800, lineHeight: 1.45 }}>{liveQ.text}</div>
